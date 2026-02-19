@@ -75,9 +75,10 @@ This typically produces `models/ggml-medium.bin` (exact name depends on the mode
 This is preconfigured for:
 
 - Model: `models\ggml-medium.bin`
-- Device index: `1`
 - Streamer.bot WS: `ws://127.0.0.1:8080/`
 - Action name: `AI Subtitler` (arg key: `AiText`)
+
+The one-click launcher uses `--fast` by default to reduce latency (faster, less accurate).
 
 ```powershell
 ./start-ai-subtitler.cmd
@@ -106,6 +107,17 @@ PowerShell tip: if you ever run into execution quirks, this form also works:
 
 VS Code tip: don’t paste commands that look like `[file](http://_vscodecontentref_/...)` into PowerShell — that’s a Markdown link and PowerShell will try to execute the `http://...` part.
 
+### Speed vs accuracy
+
+- Faster (default via `start-ai-subtitler.cmd`): uses `--fast`
+- More accurate (slower): run via `run.cmd`/`run.ps1` and omit `--fast` (and/or use longer blocks)
+
+Example (more accurate, slower):
+
+```powershell
+./run.ps1 --model (Resolve-Path .\models\ggml-medium.bin) --mic 0 --length-ms 30000
+```
+
 ### Choose your microphone
 
 List capture devices:
@@ -125,7 +137,7 @@ Then run (example):
 If you enabled WebSocket authentication in Streamer.bot:
 
 ```powershell
-./run.cmd --model .\models\ggml-medium.bin --device-index 1 --ws-url ws://127.0.0.1:8080/ --action-name "AI Subtitler" --arg-key AiText --ws-password "your_password"
+./run.cmd --model .\models\ggml-medium.bin --mic 0 --ws-url ws://127.0.0.1:8080/ --action-name "AI Subtitler" --arg-key AiText --ws-password "your_password"
 ```
 
 ## Notes

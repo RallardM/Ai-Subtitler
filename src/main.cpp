@@ -34,6 +34,9 @@ struct app_params {
     bool use_gpu = true;
     bool flash_attn = true;
 
+    // speed/accuracy preset
+    bool fast = false;
+
     // VAD streaming
     int32_t length_ms = 30000;  // audio window captured on silence
     float vad_thold = 0.60f;
@@ -98,6 +101,9 @@ static void print_usage(const char * exe) {
     std::fprintf(stderr, "  --translate               Translate to English\n");
     std::fprintf(stderr, "  --no-gpu                  Disable GPU inference\n");
     std::fprintf(stderr, "  --no-flash-attn           Disable flash-attn\n\n");
+
+    std::fprintf(stderr, "Presets:\n");
+    std::fprintf(stderr, "  --fast                    Faster, less accurate (shorter blocks, no extra language-detect pass, more aggressive decoding)\n\n");
 
     std::fprintf(stderr, "Audio/VAD:\n");
     std::fprintf(stderr, "  --list-devices            List capture devices and exit\n");
@@ -175,6 +181,12 @@ static bool parse_args(int argc, char ** argv, app_params & p) {
             p.use_gpu = false;
         } else if (arg == "--no-flash-attn") {
             p.flash_attn = false;
+        } else if (arg == "--fast") {
+            p.fast = true;
+            // Preset tuned for lower latency at the cost of accuracy.
+            // Users can still override these later in the CLI.
+            p.length_ms = 8000;
+            p.threads = std::max(1, (int32_t) std::thread::hardware_concurrency());
         } else if (arg == "--list-devices") {
             p.list_devices = true;
         } else if (arg == "--mic") {
@@ -479,14 +491,19 @@ int main(int argc, char ** argv) {
         wparams.print_special = false;
         wparams.print_timestamps = false;
         wparams.translate = params.translate;
-        wparams.single_segment = false;
-        wparams.max_tokens = 0;
+        wparams.single_segment = params.fast ? true : false;
+        wparams.max_tokens = params.fast ? 64 : 0;
+        wparams.no_context = params.fast ? true : false;
+        if (params.fast) {
+            // Greedy decoding: minimize extra sampling work.
+            wparams.greedy.best_of = 1;
+        }
         // Language selection:
         // - If user asked for auto, keep auto behavior.
         // - If user asked for a specific language other than English, honor it.
         // - If language is English (default), auto-fallback to French when French is clearly more likely.
         std::string effective_language = params.language;
-        if (params.language == "en") {
+        if (!params.fast && params.language == "en") {
             effective_language = pick_language_en_fallback_fr(ctx, pcm_block, params.threads);
         }
         wparams.language = effective_language.c_str();

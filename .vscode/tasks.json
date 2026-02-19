@@ -4,8 +4,7 @@
     {
       "label": "Ai-Subtitler: List capture devices",
       "type": "shell",
-      "command": "${workspaceFolder}\\start-ai-subtitler-mic1.cmd",
-      "args": ["-ListDevices"],
+      "command": "${workspaceFolder}\\list-devices.cmd",
       "problemMatcher": []
     },
     {
