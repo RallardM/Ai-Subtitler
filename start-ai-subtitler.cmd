@@ -5,12 +5,20 @@ REM One-click launcher (avoids VS Code hyperlink copy/paste issues)
 
 echo Starting Ai-Subtitler...
 echo   Model: %~dp0models\ggml-medium.bin
-echo   Device index: 1
+if not "%~1"=="" (
+	echo   Mic: %~1
+) else (
+	echo   Mic: (will prompt)
+)
 echo   Streamer.bot WS: ws://127.0.0.1:8080/
 echo   Action: AI Subtitler (arg key: AiText)
 echo.
 
-call "%~dp0run.cmd" --model "%~dp0models\ggml-medium.bin" --device-index 1 --ws-url ws://127.0.0.1:8080/ --action-name "AI Subtitler" --arg-key AiText --startup-text "[Ai-Subtitler connected]"
+if not "%~1"=="" (
+	call "%~dp0run.cmd" --model "%~dp0models\ggml-medium.bin" --mic "%~1" --ws-url ws://127.0.0.1:8080/ --action-name "AI Subtitler" --arg-key AiText --startup-text "[Ai-Subtitler connected]"
+) else (
+	call "%~dp0run.cmd" --model "%~dp0models\ggml-medium.bin" --ws-url ws://127.0.0.1:8080/ --action-name "AI Subtitler" --arg-key AiText --startup-text "[Ai-Subtitler connected]"
+)
 
 if errorlevel 1 (
 	echo.

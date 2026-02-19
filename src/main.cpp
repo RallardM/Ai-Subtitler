@@ -512,6 +512,13 @@ int main(int argc, char ** argv) {
             continue;
         }
 
+        // whisper.cpp can emit this special token when the audio block is effectively silence.
+        // Don't send it to Streamer.bot.
+        if (text == "[BLANK_AUDIO]") {
+            t_last = t_now;
+            continue;
+        }
+
         // De-dupe: skip very similar repeats (common with sliding windows).
         if (!last_sent.empty()) {
             const float sim = ::similarity(last_sent, text);

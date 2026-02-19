@@ -1,0 +1,26 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Ai-Subtitler: List capture devices",
+      "type": "shell",
+      "command": "${workspaceFolder}\\start-ai-subtitler-mic1.cmd",
+      "args": ["-ListDevices"],
+      "problemMatcher": []
+    },
+    {
+      "label": "Ai-Subtitler: Start (mic index 0)",
+      "type": "shell",
+      "command": "${workspaceFolder}\\start-ai-subtitler.cmd",
+      "args": ["0"],
+      "problemMatcher": []
+    },
+    {
+      "label": "Ai-Subtitler: Start (mic name contains Samson)",
+      "type": "shell",
+      "command": "${workspaceFolder}\\start-ai-subtitler.cmd",
+      "args": ["Samson"],
+      "problemMatcher": []
+    }
+  ]
+}

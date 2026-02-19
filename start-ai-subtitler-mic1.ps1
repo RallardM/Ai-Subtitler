@@ -63,7 +63,7 @@ if (-not $devices -or $devices.Count -eq 0) {
 }
 
 if ($DeviceName) {
-  $argsListDevice = @('--device-name', $DeviceName)
+  $micValue = $DeviceName
 } else {
   # Validate requested index; if invalid but there is exactly one device, fall back to it.
   $valid = $devices.Index -contains $DeviceIndex
@@ -82,7 +82,7 @@ if ($DeviceName) {
       exit 2
     }
   }
-  $argsListDevice = @('--device-index', $DeviceIndex)
+  $micValue = [string]$DeviceIndex
 }
 
 if (-not $ModelPath) {
@@ -101,7 +101,7 @@ $resolvedModel = (Resolve-Path $ModelPath).Path
 
 $argsList = @(
   '--model', $resolvedModel,
-  $argsListDevice[0], $argsListDevice[1],
+  '--mic', $micValue,
   '--ws-url', $WsUrl,
   '--action-name', $ActionName,
   '--arg-key', $ArgKey,

@@ -83,6 +83,29 @@ This is preconfigured for:
 ./start-ai-subtitler.cmd
 ```
 
+If you want to explicitly select the mic (recommended because device indexes can change), pass either:
+
+- An index: `0`, `1`, ...
+- A name substring (more stable): e.g. `"Samson"`
+
+Examples:
+
+```powershell
+# mic by index
+./start-ai-subtitler.cmd 0
+
+# mic by name substring
+./start-ai-subtitler.cmd "Samson"
+```
+
+PowerShell tip: if you ever run into execution quirks, this form also works:
+
+```powershell
+& .\start-ai-subtitler.cmd 0
+```
+
+VS Code tip: don’t paste commands that look like `[file](http://_vscodecontentref_/...)` into PowerShell — that’s a Markdown link and PowerShell will try to execute the `http://...` part.
+
 ### Choose your microphone
 
 List capture devices:
