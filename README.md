@@ -91,6 +91,8 @@ List capture devices:
 ./list-devices.cmd
 ```
 
+If you run the exe without specifying `--device-index` or `--device-name`, it will list devices and prompt you to pick one (interactive terminals only).
+
 Then run (example):
 
 ```powershell

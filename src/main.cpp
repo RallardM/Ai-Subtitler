@@ -13,9 +13,16 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <iostream>
 #include <string>
 #include <thread>
 #include <vector>
+
+#if defined(_WIN32)
+#    include <io.h>
+#else
+#    include <unistd.h>
+#endif
 
 struct app_params {
     // whisper
@@ -94,8 +101,10 @@ static void print_usage(const char * exe) {
 
     std::fprintf(stderr, "Audio/VAD:\n");
     std::fprintf(stderr, "  --list-devices            List capture devices and exit\n");
+    std::fprintf(stderr, "  --mic <N|substring>       Microphone selection shortcut: index (e.g. --mic 0) or name substring (e.g. --mic Samson)\n");
     std::fprintf(stderr, "  --device-index N          Capture device index (SDL2)\n");
     std::fprintf(stderr, "  --device-name <substring> Capture device name substring (preferred)\n");
+    std::fprintf(stderr, "                           If neither is provided, the app will list devices and prompt (interactive shells only)\n");
     std::fprintf(stderr, "  --length-ms N             Window length for VAD blocks (default: 30000)\n");
     std::fprintf(stderr, "  --vad-thold X             VAD threshold (default: 0.60)\n");
     std::fprintf(stderr, "  --freq-thold X            High-pass cutoff (default: 100.0)\n\n");
@@ -168,6 +177,32 @@ static bool parse_args(int argc, char ** argv, app_params & p) {
             p.flash_attn = false;
         } else if (arg == "--list-devices") {
             p.list_devices = true;
+        } else if (arg == "--mic") {
+            const std::string v = require_value("--mic");
+            // If it's an integer, treat as index. Otherwise treat as substring.
+            // Accept leading +/-, but only allow non-negative indices.
+            bool all_digits = !v.empty();
+            size_t start = 0;
+            if (v.size() >= 1 && (v[0] == '+' || v[0] == '-')) {
+                start = 1;
+            }
+            for (size_t k = start; k < v.size(); ++k) {
+                if (!std::isdigit((unsigned char) v[k])) {
+                    all_digits = false;
+                    break;
+                }
+            }
+
+            if (all_digits) {
+                const int idx = std::stoi(v);
+                if (idx < 0) {
+                    std::fprintf(stderr, "error: --mic index must be >= 0\n");
+                    return false;
+                }
+                p.device_index = idx;
+            } else {
+                p.device_name_substring = v;
+            }
         } else if (arg == "--device-index") {
             p.device_index = std::stoi(require_value("--device-index"));
         } else if (arg == "--device-name") {
@@ -213,6 +248,75 @@ static bool sdl_list_devices_only() {
 
     SDL_Quit();
     return true;
+}
+
+static bool stdin_is_tty() {
+#if defined(_WIN32)
+    return _isatty(_fileno(stdin)) != 0;
+#else
+    return isatty(fileno(stdin)) != 0;
+#endif
+}
+
+static int sdl_prompt_for_device_index(int default_index) {
+    SDL_LogSetPriority(SDL_LOG_CATEGORY_APPLICATION, SDL_LOG_PRIORITY_INFO);
+
+    if (SDL_Init(SDL_INIT_AUDIO) < 0) {
+        std::fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
+        return -1;
+    }
+
+    const int n = SDL_GetNumAudioDevices(SDL_TRUE);
+    std::printf("Found %d capture devices:\n", n);
+    for (int i = 0; i < n; ++i) {
+        const char * name = SDL_GetAudioDeviceName(i, SDL_TRUE);
+        std::printf("  [%d] %s\n", i, name ? name : "(null)");
+    }
+
+    if (n <= 0) {
+        SDL_Quit();
+        return -1;
+    }
+
+    if (!stdin_is_tty()) {
+        std::fprintf(stderr, "No capture device specified and stdin is not interactive; using SDL default device.\n");
+        std::fprintf(stderr, "Tip: run with --list-devices then pass --device-index N (or --device-name).\n");
+        SDL_Quit();
+        return -1;
+    }
+
+    if (default_index < 0 || default_index >= n) {
+        default_index = 0;
+    }
+
+    while (true) {
+        std::printf("Select capture device index [0..%d] (default: %d): ", n - 1, default_index);
+        std::fflush(stdout);
+
+        std::string line;
+        if (!std::getline(std::cin, line)) {
+            SDL_Quit();
+            return -1;
+        }
+
+        // trim
+        line = trim_and_collapse_ws(line);
+        if (line.empty()) {
+            SDL_Quit();
+            return default_index;
+        }
+
+        try {
+            const int idx = std::stoi(line);
+            if (idx >= 0 && idx < n) {
+                SDL_Quit();
+                return idx;
+            }
+        } catch (...) {
+        }
+
+        std::fprintf(stderr, "Invalid device index.\n");
+    }
 }
 
 static int sdl_find_device_index_by_substring(const std::string & needle) {
@@ -263,6 +367,16 @@ int main(int argc, char ** argv) {
         }
         params.device_index = idx;
         std::fprintf(stderr, "Using capture device index %d (matched by name substring)\n", params.device_index);
+    }
+
+    // If user did not specify a device, list all devices and prompt for selection.
+    // If stdin is not interactive, fall back to SDL default device (-1).
+    if (params.device_index < 0 && params.device_name_substring.empty()) {
+        const int chosen = sdl_prompt_for_device_index(/*default_index*/ 0);
+        if (chosen >= 0) {
+            params.device_index = chosen;
+            std::fprintf(stderr, "Using capture device index %d (selected interactively)\n", params.device_index);
+        }
     }
 
     // init audio capture (reuse whisper.cpp example helper)
