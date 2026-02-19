@@ -1,10 +1,46 @@
 # Ai-Subtitler (Streamer.bot + whisper.cpp)
 
-This repo contains a small executable that:
+Windows app that:
 
 1. Captures microphone audio (SDL2)
-2. Runs Whisper (via the `submodules/whisper.cpp` submodule)
-3. Sends each finalized “utterance block” to Streamer.bot via WebSocket `DoAction`
+2. Transcribes speech with Whisper (via the `submodules/whisper.cpp` submodule)
+3. Sends each finalized text block to Streamer.bot via WebSocket `DoAction`
+
+## Dependencies
+
+### Build-time
+
+- Windows 10/11
+- Git
+- CMake 3.16+
+- Visual Studio 2022 (or Build Tools) with **Desktop development with C++**
+  - MSVC toolchain
+  - Windows 10/11 SDK
+
+SDL2 is required for microphone capture. This repo will try to:
+
+- Use an existing SDL2 install if CMake can find it, otherwise
+- Fetch and build SDL2 automatically (default: `-DAI_SUBTITLER_FETCH_SDL2=ON`)
+
+### Run-time
+
+- A Whisper model file on disk (NOT included in git; too large for GitHub)
+- Streamer.bot with WebSocket server enabled (default is usually `ws://127.0.0.1:8080/`)
+
+## Clone / setup
+
+This repo uses a git submodule (`submodules/whisper.cpp`).
+
+```powershell
+git clone --recurse-submodules https://github.com/RallardM/Ai-Subtitler.git
+cd Ai-Subtitler
+```
+
+If you already cloned without submodules:
+
+```powershell
+git submodule update --init --recursive
+```
 
 ## Build (Windows)
 
@@ -13,7 +49,7 @@ cmake -S . -B build -A x64
 cmake --build build --config Release
 ```
 
-Output (Release):
+Output:
 
 - `build/Release/ai-subtitler-streamerbot.exe`
 
@@ -21,52 +57,53 @@ The build copies required DLLs next to the exe automatically.
 
 ## Download a model
 
-You can use whisper.cpp’s model downloader:
+Put model files under `models/` (this folder is ignored by git).
+
+Example using whisper.cpp’s downloader:
 
 ```powershell
-# download to a local folder (example: .\models)
 New-Item -ItemType Directory -Force models | Out-Null
 submodules\whisper.cpp\models\download-ggml-model.cmd medium .\models
 ```
 
-That produces: `models/ggml-medium.bin` (or similar, depending on the model name).
+This typically produces `models/ggml-medium.bin` (exact name depends on the model).
 
-## Run while streaming
+## Run
 
-Fastest way (preconfigured for: device index 1, `models/ggml-medium.bin`, Streamer.bot `ws://127.0.0.1:8080/`, action `AI Subtitler`, arg key `AiText`):
+### Quick start (one-click)
+
+This is preconfigured for:
+
+- Model: `models\ggml-medium.bin`
+- Device index: `1`
+- Streamer.bot WS: `ws://127.0.0.1:8080/`
+- Action name: `AI Subtitler` (arg key: `AiText`)
 
 ```powershell
 ./start-ai-subtitler.cmd
 ```
 
-1) List capture devices (to match OBS’s Mic/Aux device):
+### Choose your microphone
+
+List capture devices:
 
 ```powershell
 ./list-devices.cmd
 ```
 
-2) Run transcription + send to Streamer.bot Action:
+Then run (example):
 
 ```powershell
-./run.cmd \
-  --model .\models\ggml-medium.bin \
-  --device-name "Samson" \
-  --language en \
-  --ws-url ws://127.0.0.1:8080/ \
-  --action-name "AI Subtitler" \
-  --arg-key AiText
+./run.cmd --model .\models\ggml-medium.bin --device-name "Samson" --language en --ws-url ws://127.0.0.1:8080/ --action-name "AI Subtitler" --arg-key AiText
 ```
 
-If you enabled WebSocket authentication in Streamer.bot, add:
+If you enabled WebSocket authentication in Streamer.bot:
 
 ```powershell
-  --ws-password "your_password"
+./run.cmd --model .\models\ggml-medium.bin --device-index 1 --ws-url ws://127.0.0.1:8080/ --action-name "AI Subtitler" --arg-key AiText --ws-password "your_password"
 ```
 
-The executable uses Streamer.bot’s `DoAction` request and passes the transcript as an argument named `AiText`.
+## Notes
 
-### Language behavior
-
-- Default is English (`en`).
-- If the audio block is more likely French, it will automatically switch to French (`fr`).
-- To force a specific language (or restore full auto-detect), pass `--language <code>` (e.g. `--language fr` or `--language auto`).
+- Large model binaries are intentionally ignored (GitHub rejects files > 100 MB).
+- If SDL2 is not found and you disabled auto-fetch, set `SDL2_DIR`/`SDL2_ROOT` to an SDL2 dev package (or install SDL2 via vcpkg) and re-configure CMake.
