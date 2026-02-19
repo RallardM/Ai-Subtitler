@@ -81,7 +81,7 @@ This is preconfigured for:
 The one-click launcher uses `--fast` by default to reduce latency (faster, less accurate).
 
 ```powershell
-./start-ai-subtitler.cmd
+.\start-ai-subtitler.cmd
 ```
 
 If you want to explicitly select the mic (recommended because device indexes can change), pass either:
@@ -93,10 +93,10 @@ Examples:
 
 ```powershell
 # mic by index
-./start-ai-subtitler.cmd 0
+.\start-ai-subtitler.cmd 0
 
 # mic by name substring
-./start-ai-subtitler.cmd "Samson"
+.\start-ai-subtitler.cmd "Samson"
 ```
 
 PowerShell tip: if you ever run into execution quirks, this form also works:
@@ -105,7 +105,7 @@ PowerShell tip: if you ever run into execution quirks, this form also works:
 & .\start-ai-subtitler.cmd 0
 ```
 
-VS Code tip: don’t paste commands that look like `[file](http://_vscodecontentref_/...)` into PowerShell — that’s a Markdown link and PowerShell will try to execute the `http://...` part.
+VS Code tip: if copy/paste gets mangled, type the command manually or use VS Code’s `Terminal -> Run Task...`.
 
 ### Speed vs accuracy
 
@@ -115,7 +115,7 @@ VS Code tip: don’t paste commands that look like `[file](http://_vscodecontent
 Example (more accurate, slower):
 
 ```powershell
-./run.ps1 --model (Resolve-Path .\models\ggml-medium.bin) --mic 0 --length-ms 30000
+.\run.ps1 --model (Resolve-Path .\models\ggml-medium.bin) --mic 0 --length-ms 30000
 ```
 
 ### Choose your microphone
@@ -123,7 +123,7 @@ Example (more accurate, slower):
 List capture devices:
 
 ```powershell
-./list-devices.cmd
+.\list-devices.cmd
 ```
 
 If you run the exe without specifying `--device-index` or `--device-name`, it will list devices and prompt you to pick one (interactive terminals only).
@@ -131,13 +131,13 @@ If you run the exe without specifying `--device-index` or `--device-name`, it wi
 Then run (example):
 
 ```powershell
-./run.cmd --model .\models\ggml-medium.bin --device-name "Samson" --language en --ws-url ws://127.0.0.1:8080/ --action-name "AI Subtitler" --arg-key AiText
+.\run.cmd --model .\models\ggml-medium.bin --mic "Samson" --language en --ws-url ws://127.0.0.1:8080/ --action-name "AI Subtitler" --arg-key AiText
 ```
 
 If you enabled WebSocket authentication in Streamer.bot:
 
 ```powershell
-./run.cmd --model .\models\ggml-medium.bin --mic 0 --ws-url ws://127.0.0.1:8080/ --action-name "AI Subtitler" --arg-key AiText --ws-password "your_password"
+.\run.cmd --model .\models\ggml-medium.bin --mic 0 --ws-url ws://127.0.0.1:8080/ --action-name "AI Subtitler" --arg-key AiText --ws-password "your_password"
 ```
 
 ## Notes
