@@ -20,7 +20,8 @@
 struct app_params {
     // whisper
     std::string model;
-    std::string language = "auto";
+    // Default to English, with an automatic fallback to French if detection strongly suggests it.
+    std::string language = "en";
     int32_t threads = std::max(1, (int32_t) std::thread::hardware_concurrency() - 1);
     bool translate = false;
     bool use_gpu = true;
@@ -38,6 +39,8 @@ struct app_params {
 
     // streamer.bot
     streamerbot_ws_config bot;
+
+    std::string startup_text;
 
     // misc
     float dedup_similarity = 0.90f;
@@ -83,7 +86,7 @@ static void print_usage(const char * exe) {
     std::fprintf(stderr, "Usage: %s --model <path> [options]\n\n", exe);
     std::fprintf(stderr, "Whisper:\n");
     std::fprintf(stderr, "  --model <path>            Path to ggml model (required)\n");
-    std::fprintf(stderr, "  --language <auto|en|...>  Spoken language (default: auto)\n");
+    std::fprintf(stderr, "  --language <auto|en|...>  Spoken language (default: en; auto-fallback to fr when likely)\n");
     std::fprintf(stderr, "  --threads N               Threads (default: cores-1)\n");
     std::fprintf(stderr, "  --translate               Translate to English\n");
     std::fprintf(stderr, "  --no-gpu                  Disable GPU inference\n");
@@ -102,6 +105,38 @@ static void print_usage(const char * exe) {
     std::fprintf(stderr, "  --ws-password <pwd>       Optional WebSocket password\n");
     std::fprintf(stderr, "  --action-name \"AI Subtitler\"   Action to execute\n");
     std::fprintf(stderr, "  --arg-key AiText           Argument key (default: AiText)\n\n");
+
+    std::fprintf(stderr, "Diagnostics:\n");
+    std::fprintf(stderr, "  --startup-text <text>      Send a DoAction immediately after start (useful to verify Streamer.bot connectivity)\n\n");
+}
+
+static std::string pick_language_en_fallback_fr(whisper_context * ctx, const std::vector<float> & pcm, int n_threads) {
+    // Only try to disambiguate between English and French.
+    // Returns "en" unless French is clearly more likely.
+    if (!ctx || pcm.empty()) {
+        return "en";
+    }
+
+    const int rc_mel = whisper_pcm_to_mel(ctx, pcm.data(), (int) pcm.size(), n_threads);
+    if (rc_mel != 0) {
+        return "en";
+    }
+
+    std::vector<float> lang_probs(whisper_lang_max_id() + 1, 0.0f);
+    const int detected_id = whisper_lang_auto_detect(ctx, 0, n_threads, lang_probs.data());
+    (void) detected_id;
+
+    const int en_id = whisper_lang_id("en");
+    const int fr_id = whisper_lang_id("fr");
+    const float p_en = (en_id >= 0 && en_id < (int) lang_probs.size()) ? lang_probs[en_id] : 0.0f;
+    const float p_fr = (fr_id >= 0 && fr_id < (int) lang_probs.size()) ? lang_probs[fr_id] : 0.0f;
+
+    // Conservative switch to French: it must beat English and also be non-trivial.
+    if (p_fr > p_en && p_fr >= 0.50f) {
+        return "fr";
+    }
+
+    return "en";
 }
 
 static bool parse_args(int argc, char ** argv, app_params & p) {
@@ -151,6 +186,8 @@ static bool parse_args(int argc, char ** argv, app_params & p) {
             p.bot.action_name = require_value("--action-name");
         } else if (arg == "--arg-key") {
             p.bot.arg_key = require_value("--arg-key");
+        } else if (arg == "--startup-text") {
+            p.startup_text = require_value("--startup-text");
         } else {
             std::fprintf(stderr, "error: unknown argument: %s\n", arg.c_str());
             return false;
@@ -260,23 +297,31 @@ int main(int argc, char ** argv) {
         }
     }
 
-    // connect to Streamer.bot (keep retrying)
     streamerbot_ws_client bot;
-    {
-        std::string err;
-        for (int attempt = 0; attempt < 1000000; ++attempt) {
-            if (bot.connect_and_handshake(params.bot, err)) {
-                std::fprintf(stderr, "Connected to Streamer.bot WebSocket: %s\n", params.bot.url.c_str());
-                break;
-            }
-            std::fprintf(stderr, "Streamer.bot connect failed (%s). Retrying in 2s...\n", err.c_str());
-            std::this_thread::sleep_for(std::chrono::seconds(2));
-        }
-    }
 
     std::vector<float> pcm_2s;
     std::vector<float> pcm_block;
     std::string last_sent;
+
+    std::fprintf(stderr, "\nAi-Subtitler started.\n");
+    std::fprintf(stderr, "- Capture device index: %d\n", params.device_index);
+    std::fprintf(stderr, "- VAD: length_ms=%d vad_thold=%.2f freq_thold=%.1f\n", params.length_ms, params.vad_thold, params.freq_thold);
+    std::fprintf(stderr, "- Streamer.bot: %s (Action='%s', Arg='%s')\n", params.bot.url.c_str(), params.bot.action_name.c_str(), params.bot.arg_key.c_str());
+    std::fprintf(stderr, "Speak normally, then pause briefly to send a block.\n\n");
+
+    if (!params.startup_text.empty()) {
+        std::string err;
+        if (!bot.connect_and_handshake(params.bot, err)) {
+            std::fprintf(stderr, "Streamer.bot connect failed (%s). Will keep running and retry on first transcript.\n", err.c_str());
+        } else {
+            std::fprintf(stderr, "Connected to Streamer.bot WebSocket: %s\n", params.bot.url.c_str());
+            if (!bot.do_action_text(params.bot, params.startup_text, err)) {
+                std::fprintf(stderr, "Streamer.bot DoAction startup-text failed (%s).\n", err.c_str());
+            } else {
+                std::fprintf(stderr, "Streamer.bot startup-text sent.\n");
+            }
+        }
+    }
 
     std::puts("[Start speaking]");
     std::fflush(stdout);
@@ -322,7 +367,15 @@ int main(int argc, char ** argv) {
         wparams.translate = params.translate;
         wparams.single_segment = false;
         wparams.max_tokens = 0;
-        wparams.language = params.language.c_str();
+        // Language selection:
+        // - If user asked for auto, keep auto behavior.
+        // - If user asked for a specific language other than English, honor it.
+        // - If language is English (default), auto-fallback to French when French is clearly more likely.
+        std::string effective_language = params.language;
+        if (params.language == "en") {
+            effective_language = pick_language_en_fallback_fr(ctx, pcm_block, params.threads);
+        }
+        wparams.language = effective_language.c_str();
         wparams.n_threads = params.threads;
         wparams.audio_ctx = 0;
 
@@ -354,19 +407,19 @@ int main(int argc, char ** argv) {
             }
         }
 
-        // Send to Streamer.bot (retry once on disconnect)
+        // Send to Streamer.bot (best-effort)
         {
             std::string err;
-            if (!bot.is_connected()) {
-                bot.connect_and_handshake(params.bot, err);
-            }
-            if (!bot.do_action_text(params.bot, text, err)) {
-                std::fprintf(stderr, "DoAction failed (%s). Reconnecting...\n", err.c_str());
-                bot.close();
-                if (bot.connect_and_handshake(params.bot, err)) {
-                    (void) bot.do_action_text(params.bot, text, err);
+            // Keep the connection short-lived to avoid servers that close idle/unread sockets.
+            // This is sentence-level traffic, so reconnect overhead is acceptable.
+            if (!bot.connect_and_handshake(params.bot, err)) {
+                std::fprintf(stderr, "Streamer.bot connect failed (%s).\n", err.c_str());
+            } else {
+                if (!bot.do_action_text(params.bot, text, err)) {
+                    std::fprintf(stderr, "DoAction failed (%s).\n", err.c_str());
                 }
             }
+            bot.close();
         }
 
         last_sent = text;

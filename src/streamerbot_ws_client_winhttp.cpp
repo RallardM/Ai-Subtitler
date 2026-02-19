@@ -2,7 +2,6 @@
 
 #ifdef _WIN32
 
-#define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
 #include <winhttp.h>
@@ -28,18 +27,43 @@ static std::string win32_last_error_string(DWORD err_code) {
         return {};
     }
 
-    LPSTR buf = nullptr;
-    const DWORD flags = FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS;
-    const DWORD len = FormatMessageA(flags, nullptr, err_code, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR) &buf, 0, nullptr);
-    std::string msg;
-    if (len && buf) {
-        msg.assign(buf, len);
-        while (!msg.empty() && (msg.back() == '\r' || msg.back() == '\n')) {
-            msg.pop_back();
+    auto format_msg = [&](DWORD flags, HMODULE module) -> std::string {
+        LPSTR buf = nullptr;
+        const DWORD len = FormatMessageA(flags, module, err_code, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR) &buf, 0, nullptr);
+        std::string msg;
+        if (len && buf) {
+            msg.assign(buf, len);
+            while (!msg.empty() && (msg.back() == '\r' || msg.back() == '\n')) {
+                msg.pop_back();
+            }
         }
+        if (buf) {
+            LocalFree(buf);
+        }
+        return msg;
+    };
+
+    std::string msg;
+    {
+        const DWORD flags = FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS;
+        msg = format_msg(flags, nullptr);
     }
-    if (buf) {
-        LocalFree(buf);
+
+    // Many WinHTTP errors (e.g. 12030 / 0x2EFE) live in winhttp.dll message table.
+    if (msg.empty()) {
+        HMODULE h_winhttp = GetModuleHandleW(L"winhttp.dll");
+        bool should_free = false;
+        if (!h_winhttp) {
+            h_winhttp = LoadLibraryW(L"winhttp.dll");
+            should_free = (h_winhttp != nullptr);
+        }
+        if (h_winhttp) {
+            const DWORD flags = FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_HMODULE | FORMAT_MESSAGE_IGNORE_INSERTS;
+            msg = format_msg(flags, h_winhttp);
+        }
+        if (should_free && h_winhttp) {
+            FreeLibrary(h_winhttp);
+        }
     }
 
     char tmp[64];
@@ -283,8 +307,8 @@ bool streamerbot_ws_client::connect_internal(const ws_url_parts & parts, std::st
         return false;
     }
 
-    DWORD opt = 0;
-    if (!WinHttpSetOption((HINTERNET) m_h_request, WINHTTP_OPTION_UPGRADE_TO_WEB_SOCKET, &opt, sizeof(opt))) {
+    // Per WinHTTP docs, WINHTTP_OPTION_UPGRADE_TO_WEB_SOCKET takes no data.
+    if (!WinHttpSetOption((HINTERNET) m_h_request, WINHTTP_OPTION_UPGRADE_TO_WEB_SOCKET, nullptr, 0)) {
         err = "WinHttpSetOption(UPGRADE_TO_WEB_SOCKET) failed: " + win32_last_error_string(GetLastError());
         close();
         return false;
