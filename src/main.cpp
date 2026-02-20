@@ -39,6 +39,9 @@ struct app_params {
 
     // VAD streaming
     int32_t length_ms = 30000;  // audio window captured on silence
+    int32_t vad_check_ms = 2000;   // how often we evaluate VAD and decide to flush
+    int32_t vad_window_ms = 2000;  // audio window used for VAD evaluation
+    int32_t vad_last_ms = 1000;    // trailing part of vad_window_ms that must be relatively silent
     float vad_thold = 0.60f;
     float freq_thold = 100.0f;
 
@@ -185,7 +188,12 @@ static bool parse_args(int argc, char ** argv, app_params & p) {
             p.fast = true;
             // Preset tuned for lower latency at the cost of accuracy.
             // Users can still override these later in the CLI.
-            p.length_ms = 8000;
+            // A shorter decode window reduces end-to-end delay.
+            p.length_ms = 4000;
+            // Reduce the "wait to flush" latency by checking VAD frequently and requiring a shorter silence tail.
+            p.vad_check_ms = 150;
+            p.vad_window_ms = 1000;
+            p.vad_last_ms = 400;
             p.threads = std::max(1, (int32_t) std::thread::hardware_concurrency());
         } else if (arg == "--list-devices") {
             p.list_devices = true;
@@ -361,6 +369,14 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
+    // Sanity/clamping to avoid invalid VAD windows.
+    params.vad_check_ms = std::max<int32_t>(50, params.vad_check_ms);
+    params.vad_window_ms = std::max<int32_t>(200, params.vad_window_ms);
+    params.vad_last_ms = std::max<int32_t>(50, params.vad_last_ms);
+    if (params.vad_last_ms > params.vad_window_ms) {
+        params.vad_window_ms = params.vad_last_ms;
+    }
+
     if (params.list_devices) {
         return sdl_list_devices_only() ? 0 : 2;
     }
@@ -425,13 +441,14 @@ int main(int argc, char ** argv) {
 
     streamerbot_ws_client bot;
 
-    std::vector<float> pcm_2s;
+    std::vector<float> pcm_vad_window;
     std::vector<float> pcm_block;
     std::string last_sent;
 
     std::fprintf(stderr, "\nAi-Subtitler started.\n");
     std::fprintf(stderr, "- Capture device index: %d\n", params.device_index);
-    std::fprintf(stderr, "- VAD: length_ms=%d vad_thold=%.2f freq_thold=%.1f\n", params.length_ms, params.vad_thold, params.freq_thold);
+    std::fprintf(stderr, "- VAD: length_ms=%d check_ms=%d vad_window_ms=%d vad_last_ms=%d vad_thold=%.2f freq_thold=%.1f\n",
+        params.length_ms, params.vad_check_ms, params.vad_window_ms, params.vad_last_ms, params.vad_thold, params.freq_thold);
     std::fprintf(stderr, "- Streamer.bot: %s (Action='%s', Arg='%s')\n", params.bot.url.c_str(), params.bot.action_name.c_str(), params.bot.arg_key.c_str());
     std::fprintf(stderr, "Speak normally, then pause briefly to send a block.\n\n");
 
@@ -462,19 +479,20 @@ int main(int argc, char ** argv) {
 
         const auto t_now = std::chrono::high_resolution_clock::now();
         const auto t_diff = std::chrono::duration_cast<std::chrono::milliseconds>(t_now - t_last).count();
-        if (t_diff < 2000) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        if (t_diff < params.vad_check_ms) {
+            const int32_t sleep_ms = std::min<int32_t>(50, std::max<int32_t>(1, params.vad_check_ms / 3));
+            std::this_thread::sleep_for(std::chrono::milliseconds(sleep_ms));
             continue;
         }
 
-        audio.get(2000, pcm_2s);
-        if (pcm_2s.empty()) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        audio.get(params.vad_window_ms, pcm_vad_window);
+        if (pcm_vad_window.empty()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(25));
             continue;
         }
 
         // In whisper.cpp, vad_simple() returns true when the last part of the window is relatively silent.
-        if (!::vad_simple(pcm_2s, WHISPER_SAMPLE_RATE, 1000, params.vad_thold, params.freq_thold, false)) {
+        if (!::vad_simple(pcm_vad_window, WHISPER_SAMPLE_RATE, params.vad_last_ms, params.vad_thold, params.freq_thold, false)) {
             t_last = t_now;
             continue;
         }
@@ -490,6 +508,7 @@ int main(int argc, char ** argv) {
         wparams.print_realtime = false;
         wparams.print_special = false;
         wparams.print_timestamps = false;
+        wparams.no_timestamps = params.fast ? true : false;
         wparams.translate = params.translate;
         wparams.single_segment = params.fast ? true : false;
         wparams.max_tokens = params.fast ? 64 : 0;

@@ -63,10 +63,18 @@ Example using whisper.cpp’s downloader:
 
 ```powershell
 New-Item -ItemType Directory -Force models | Out-Null
-submodules\whisper.cpp\models\download-ggml-model.cmd medium .\models
+submodules\whisper.cpp\models\download-ggml-model.cmd tiny .\models
 ```
 
-This typically produces `models/ggml-medium.bin` (exact name depends on the model).
+This typically produces `models/ggml-tiny.bin` (exact name depends on the model).
+
+Notes:
+
+- For English-only (usually a bit faster), download `tiny.en` instead:
+
+  ```powershell
+  submodules\whisper.cpp\models\download-ggml-model.cmd tiny.en .\models
+  ```
 
 ## Run
 
@@ -74,7 +82,7 @@ This typically produces `models/ggml-medium.bin` (exact name depends on the mode
 
 This is preconfigured for:
 
-- Model: `models\ggml-medium.bin`
+- Model: prefers `models\ggml-tiny.en.bin` or `models\ggml-tiny.bin` (falls back to `models\ggml-medium.bin` if tiny is not present)
 - Streamer.bot WS: `ws://127.0.0.1:8080/`
 - Action name: `AI Subtitler` (arg key: `AiText`)
 
@@ -131,13 +139,13 @@ If you run the exe without specifying `--device-index` or `--device-name`, it wi
 Then run (example):
 
 ```powershell
-.\run.cmd --model .\models\ggml-medium.bin --mic "Samson" --language en --ws-url ws://127.0.0.1:8080/ --action-name "AI Subtitler" --arg-key AiText
+.\run.cmd --model .\models\ggml-tiny.bin --mic "Samson" --language en --ws-url ws://127.0.0.1:8080/ --action-name "AI Subtitler" --arg-key AiText
 ```
 
 If you enabled WebSocket authentication in Streamer.bot:
 
 ```powershell
-.\run.cmd --model .\models\ggml-medium.bin --mic 0 --ws-url ws://127.0.0.1:8080/ --action-name "AI Subtitler" --arg-key AiText --ws-password "your_password"
+.\run.cmd --model .\models\ggml-tiny.bin --mic 0 --ws-url ws://127.0.0.1:8080/ --action-name "AI Subtitler" --arg-key AiText --ws-password "your_password"
 ```
 
 ## Notes
