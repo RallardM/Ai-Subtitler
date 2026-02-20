@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -84,6 +85,61 @@ static std::string trim_and_collapse_ws(const std::string & s) {
     return out;
 }
 
+static std::vector<std::string> split_words_lower_ascii(const std::string & s) {
+    std::vector<std::string> out;
+    std::string cur;
+    cur.reserve(16);
+
+    auto flush = [&]() {
+        if (!cur.empty()) {
+            out.push_back(cur);
+            cur.clear();
+        }
+    };
+
+    for (unsigned char ch : s) {
+        if (std::isalnum(ch)) {
+            cur.push_back((char) std::tolower(ch));
+        } else {
+            flush();
+        }
+    }
+    flush();
+    return out;
+}
+
+static bool ends_with_words(const std::vector<std::string> & words, const std::vector<std::string> & suffix) {
+    if (suffix.empty() || suffix.size() > words.size()) return false;
+    const size_t start = words.size() - suffix.size();
+    for (size_t i = 0; i < suffix.size(); ++i) {
+        if (words[start + i] != suffix[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// Detect the common "same sentence, but missing the first word" streaming artifact.
+// Returns true if `cur` is a word-suffix of `prev` (and not trivially short).
+static bool is_suffix_repeat_by_words(const std::string & prev, const std::string & cur) {
+    const auto w_prev = split_words_lower_ascii(prev);
+    const auto w_cur = split_words_lower_ascii(cur);
+    if (w_cur.size() < 3) return false;
+    if (w_prev.size() <= w_cur.size()) return false;
+    return ends_with_words(w_prev, w_cur);
+}
+
+static float audio_activity_fraction(const std::vector<float> & pcm, float abs_thold) {
+    if (pcm.empty()) return 0.0f;
+    size_t n_active = 0;
+    for (float v : pcm) {
+        if (std::fabs(v) > abs_thold) {
+            ++n_active;
+        }
+    }
+    return (float) n_active / (float) pcm.size();
+}
+
 static bool icontains(const std::string & haystack, const std::string & needle) {
     if (needle.empty()) return true;
     auto tolower_u = [](unsigned char c) { return (unsigned char) std::tolower(c); };
@@ -118,7 +174,7 @@ static void print_usage(const char * exe) {
     std::fprintf(stderr, "  --length-ms N             Window length for VAD blocks (default: 30000)\n");
     std::fprintf(stderr, "  --vad-check-ms N          How often to evaluate VAD (default: 2000; fast preset: 100)\n");
     std::fprintf(stderr, "  --vad-window-ms N         Window size used for VAD evaluation (default: 2000; fast preset: 800)\n");
-    std::fprintf(stderr, "  --vad-last-ms N           Trailing tail that must be quiet to flush (default: 1000; fast preset: 250)\n");
+    std::fprintf(stderr, "  --vad-last-ms N           Trailing tail that must be quiet to flush (default: 1000; fast preset: 350)\n");
     std::fprintf(stderr, "  --vad-thold X             VAD threshold (default: 0.60)\n");
     std::fprintf(stderr, "  --freq-thold X            High-pass cutoff (default: 100.0)\n\n");
 
@@ -199,11 +255,11 @@ static bool parse_args(int argc, char ** argv, app_params & p) {
             // Preset tuned for lower latency at the cost of accuracy.
             // Users can still override these later in the CLI.
             // A shorter decode window reduces end-to-end delay.
-            p.length_ms = 2500;
+            p.length_ms = 3500;
             // Reduce the "wait to flush" latency by checking VAD frequently and requiring a shorter silence tail.
             p.vad_check_ms = 100;
             p.vad_window_ms = 800;
-            p.vad_last_ms = 250;
+            p.vad_last_ms = 350;
             // Reduce decoder work.
             p.max_tokens = 32;
             // More aggressive de-dupe to avoid repeated overlap spam.
@@ -538,6 +594,21 @@ int main(int argc, char ** argv) {
             continue;
         }
 
+        // Fast-mode guard: keyboard clicks / near-silence can trigger VAD and cause hallucinations like "thank you".
+        // If the block has very low activity, drop it and clear the buffer so we don't retrigger on the same click.
+        if (params.fast) {
+            const float frac = audio_activity_fraction(pcm_block, /*abs_thold=*/0.01f);
+            if (frac < 0.01f) {
+                audio.clear();
+                t_last = t_now;
+                continue;
+            }
+
+            // Crucial: prevent overlap-repeat spam by discarding the already-snapshotted audio.
+            // This keeps any new speech during whisper inference for the next iteration.
+            audio.clear();
+        }
+
         whisper_full_params wparams = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
         wparams.print_progress = false;
         wparams.print_realtime = false;
@@ -612,6 +683,12 @@ int main(int argc, char ** argv) {
 
         // De-dupe: skip very similar repeats (common with sliding windows).
         if (!last_sent.empty()) {
+            // Strong de-dupe for the common suffix-repeat artifact:
+            //   "hello this is a test" -> "this is a test" -> "is a test" -> ...
+            if (is_suffix_repeat_by_words(last_sent, text)) {
+                t_last = t_now;
+                continue;
+            }
             const float sim = ::similarity(last_sent, text);
             if (sim >= params.dedup_similarity) {
                 t_last = t_now;
