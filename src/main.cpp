@@ -110,6 +110,14 @@ static std::vector<std::string> split_words_lower_ascii(const std::string & s) {
     return out;
 }
 
+static bool is_nonneg_int_str(const std::string & s) {
+    if (s.empty()) return false;
+    for (unsigned char ch : s) {
+        if (!std::isdigit(ch)) return false;
+    }
+    return true;
+}
+
 static bool ends_with_words(const std::vector<std::string> & words, const std::vector<std::string> & suffix) {
     if (suffix.empty() || suffix.size() > words.size()) return false;
     const size_t start = words.size() - suffix.size();
@@ -171,9 +179,9 @@ static bool icontains(const std::string & haystack, const std::string & needle) 
 
 static void print_usage(const char * exe) {
     std::fprintf(stderr, "\n");
-    std::fprintf(stderr, "Usage: %s --model <path> [options]\n\n", exe);
+    std::fprintf(stderr, "Usage: %s [mic_index] [--model <path>] [options]\n\n", exe);
     std::fprintf(stderr, "Whisper:\n");
-    std::fprintf(stderr, "  --model <path>            Path to ggml model (required)\n");
+    std::fprintf(stderr, "  --model <path>            Path to ggml model (optional if ./models contains a known model)\n");
     std::fprintf(stderr, "  --language <auto|en|...>  Spoken language (default: en; auto-fallback to fr when likely)\n");
     std::fprintf(stderr, "  --threads N               Threads (default: cores-1)\n");
     std::fprintf(stderr, "  --translate               Translate to English\n");
@@ -185,6 +193,7 @@ static void print_usage(const char * exe) {
 
     std::fprintf(stderr, "Audio/VAD:\n");
     std::fprintf(stderr, "  --list-devices            List capture devices and exit\n");
+    std::fprintf(stderr, "  mic_index                 Positional shortcut for mic index (e.g. '%s 0')\n", exe);
     std::fprintf(stderr, "  --mic <N|substring>       Microphone selection shortcut: index (e.g. --mic 0) or name substring (e.g. --mic Samson)\n");
     std::fprintf(stderr, "  --device-index N          Capture device index (SDL2)\n");
     std::fprintf(stderr, "  --device-name <substring> Capture device name substring (preferred)\n");
@@ -245,6 +254,15 @@ static std::string pick_language_en_fallback_fr(whisper_context * ctx, const std
 static bool parse_args(int argc, char ** argv, app_params & p) {
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
+
+        // Convenience: allow a leading positional mic index for Windows shortcuts.
+        // Example: ai-subtitler-streamerbot.exe 0 --fast
+        if (!arg.empty() && arg[0] != '-' && is_nonneg_int_str(arg)) {
+            if (p.device_index < 0 && p.device_name_substring.empty()) {
+                p.device_index = std::stoi(arg);
+                continue;
+            }
+        }
 
         auto require_value = [&](const char * name) -> const char * {
             if (i + 1 >= argc) {
@@ -350,6 +368,26 @@ static bool parse_args(int argc, char ** argv, app_params & p) {
         }
     }
     return true;
+}
+
+static std::string pick_default_model_path() {
+    // For release builds, prefer a local ./models folder next to where the user runs the exe.
+    // This mirrors start-ai-subtitler.cmd.
+    const char * candidates[] = {
+        "models/ggml-tiny.bin",
+        "models/ggml-tiny.en.bin",
+        "models/ggml-medium.bin",
+    };
+
+    for (const char * rel : candidates) {
+        FILE * f = std::fopen(rel, "rb");
+        if (f) {
+            std::fclose(f);
+            return std::string(rel);
+        }
+    }
+
+    return {};
 }
 
 static bool sdl_list_devices_only() {
@@ -493,7 +531,11 @@ int main(int argc, char ** argv) {
     }
 
     if (params.model.empty()) {
-        std::fprintf(stderr, "error: --model is required\n");
+        params.model = pick_default_model_path();
+    }
+
+    if (params.model.empty()) {
+        std::fprintf(stderr, "error: --model is required (or place a model under ./models)\n");
         print_usage(argv[0]);
         return 1;
     }

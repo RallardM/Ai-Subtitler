@@ -22,7 +22,11 @@ echo   %MODEL_TINY%
 echo   %MODEL_MEDIUM%
 echo(
 echo Download one (example):
-echo   submodules\whisper.cpp\models\download-ggml-model.cmd tiny .\models
+echo   .\download-model.cmd tiny
+echo   (or: .\download-model.cmd tiny.en)
+echo(
+echo Press any key to close...
+pause >nul
 exit /b 1
 
 :model_found
@@ -31,7 +35,7 @@ echo Starting Ai-Subtitler...
 echo   Model: %MODEL%
 if /I "%MODEL%"=="%MODEL_MEDIUM%" (
   echo   NOTE: Using medium model fallback. For a big speed boost, download tiny:
-  echo     submodules\whisper.cpp\models\download-ggml-model.cmd tiny .\models
+  echo     .\download-model.cmd tiny
 )
 set "MIC_ARG=%~1"
 set "HAS_MIC=0"

@@ -66,6 +66,12 @@ New-Item -ItemType Directory -Force models | Out-Null
 submodules\whisper.cpp\models\download-ggml-model.cmd tiny .\models
 ```
 
+Release ZIP users (no git submodule): you can also run the bundled downloader:
+
+```powershell
+.\download-model.cmd tiny
+```
+
 This typically produces `models/ggml-tiny.bin` (exact name depends on the model).
 
 Notes:
@@ -107,6 +113,12 @@ Examples:
 .\start-ai-subtitler.cmd "Samson"
 ```
 
+Tip: you can also pass extra flags after the mic selection, for example:
+
+```powershell
+.\start-ai-subtitler.cmd 0 --debug-thankyou
+```
+
 PowerShell tip: if you ever run into execution quirks, this form also works:
 
 ```powershell
@@ -114,6 +126,29 @@ PowerShell tip: if you ever run into execution quirks, this form also works:
 ```
 
 VS Code tip: if copy/paste gets mangled, type the command manually or use VS Code’s `Terminal -> Run Task...`.
+
+### Run the EXE directly (shortcut-friendly)
+
+If you prefer a Windows shortcut pointing to the executable directly, the app supports:
+
+- `mic_index` as a positional argument (example: `ai-subtitler-streamerbot.exe 0`)
+- `--model` as optional when `./models` contains one of these filenames:
+  - `models/ggml-tiny.bin`
+  - `models/ggml-tiny.en.bin`
+  - `models/ggml-medium.bin`
+
+Examples:
+
+```powershell
+# prompts for device (interactive terminals only)
+.\build\Release\ai-subtitler-streamerbot.exe --fast
+
+# skip prompt by passing the device index positionally
+.\build\Release\ai-subtitler-streamerbot.exe 0 --fast
+
+# explicit model always works (regardless of filename)
+.\build\Release\ai-subtitler-streamerbot.exe 0 --model .\models\ggml-tiny.bin --fast
+```
 
 ### Speed vs accuracy
 
