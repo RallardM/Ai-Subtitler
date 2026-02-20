@@ -36,6 +36,7 @@ struct app_params {
 
     // speed/accuracy preset
     bool fast = false;
+    int32_t max_tokens = 0;
 
     // VAD streaming
     int32_t length_ms = 30000;  // audio window captured on silence
@@ -115,8 +116,14 @@ static void print_usage(const char * exe) {
     std::fprintf(stderr, "  --device-name <substring> Capture device name substring (preferred)\n");
     std::fprintf(stderr, "                           If neither is provided, the app will list devices and prompt (interactive shells only)\n");
     std::fprintf(stderr, "  --length-ms N             Window length for VAD blocks (default: 30000)\n");
+    std::fprintf(stderr, "  --vad-check-ms N          How often to evaluate VAD (default: 2000; fast preset: 100)\n");
+    std::fprintf(stderr, "  --vad-window-ms N         Window size used for VAD evaluation (default: 2000; fast preset: 800)\n");
+    std::fprintf(stderr, "  --vad-last-ms N           Trailing tail that must be quiet to flush (default: 1000; fast preset: 250)\n");
     std::fprintf(stderr, "  --vad-thold X             VAD threshold (default: 0.60)\n");
     std::fprintf(stderr, "  --freq-thold X            High-pass cutoff (default: 100.0)\n\n");
+
+    std::fprintf(stderr, "Decoding:\n");
+    std::fprintf(stderr, "  --max-tokens N            Max tokens per block (0 = no limit; fast preset: 32)\n\n");
 
     std::fprintf(stderr, "Streamer.bot:\n");
     std::fprintf(stderr, "  --ws-url ws://127.0.0.1:8080/   WebSocket URL\n");
@@ -126,6 +133,9 @@ static void print_usage(const char * exe) {
 
     std::fprintf(stderr, "Diagnostics:\n");
     std::fprintf(stderr, "  --startup-text <text>      Send a DoAction immediately after start (useful to verify Streamer.bot connectivity)\n\n");
+
+    std::fprintf(stderr, "Output filtering:\n");
+    std::fprintf(stderr, "  --dedup-similarity X       Skip very similar repeats (default: 0.90; fast preset: 0.80)\n\n");
 }
 
 static std::string pick_language_en_fallback_fr(whisper_context * ctx, const std::vector<float> & pcm, int n_threads) {
@@ -189,11 +199,15 @@ static bool parse_args(int argc, char ** argv, app_params & p) {
             // Preset tuned for lower latency at the cost of accuracy.
             // Users can still override these later in the CLI.
             // A shorter decode window reduces end-to-end delay.
-            p.length_ms = 4000;
+            p.length_ms = 2500;
             // Reduce the "wait to flush" latency by checking VAD frequently and requiring a shorter silence tail.
-            p.vad_check_ms = 150;
-            p.vad_window_ms = 1000;
-            p.vad_last_ms = 400;
+            p.vad_check_ms = 100;
+            p.vad_window_ms = 800;
+            p.vad_last_ms = 250;
+            // Reduce decoder work.
+            p.max_tokens = 32;
+            // More aggressive de-dupe to avoid repeated overlap spam.
+            p.dedup_similarity = 0.80f;
             p.threads = std::max(1, (int32_t) std::thread::hardware_concurrency());
         } else if (arg == "--list-devices") {
             p.list_devices = true;
@@ -229,10 +243,18 @@ static bool parse_args(int argc, char ** argv, app_params & p) {
             p.device_name_substring = require_value("--device-name");
         } else if (arg == "--length-ms") {
             p.length_ms = std::stoi(require_value("--length-ms"));
+        } else if (arg == "--vad-check-ms") {
+            p.vad_check_ms = std::stoi(require_value("--vad-check-ms"));
+        } else if (arg == "--vad-window-ms") {
+            p.vad_window_ms = std::stoi(require_value("--vad-window-ms"));
+        } else if (arg == "--vad-last-ms") {
+            p.vad_last_ms = std::stoi(require_value("--vad-last-ms"));
         } else if (arg == "--vad-thold") {
             p.vad_thold = std::stof(require_value("--vad-thold"));
         } else if (arg == "--freq-thold") {
             p.freq_thold = std::stof(require_value("--freq-thold"));
+        } else if (arg == "--max-tokens") {
+            p.max_tokens = std::stoi(require_value("--max-tokens"));
         } else if (arg == "--ws-url") {
             p.bot.url = require_value("--ws-url");
         } else if (arg == "--ws-password") {
@@ -243,6 +265,8 @@ static bool parse_args(int argc, char ** argv, app_params & p) {
             p.bot.arg_key = require_value("--arg-key");
         } else if (arg == "--startup-text") {
             p.startup_text = require_value("--startup-text");
+        } else if (arg == "--dedup-similarity") {
+            p.dedup_similarity = std::stof(require_value("--dedup-similarity"));
         } else {
             std::fprintf(stderr, "error: unknown argument: %s\n", arg.c_str());
             return false;
@@ -377,6 +401,15 @@ int main(int argc, char ** argv) {
         params.vad_window_ms = params.vad_last_ms;
     }
 
+    // Decoding sanity
+    if (params.max_tokens < 0) {
+        params.max_tokens = 0;
+    }
+
+    // Filtering sanity
+    if (params.dedup_similarity < 0.0f) params.dedup_similarity = 0.0f;
+    if (params.dedup_similarity > 1.0f) params.dedup_similarity = 1.0f;
+
     if (params.list_devices) {
         return sdl_list_devices_only() ? 0 : 2;
     }
@@ -443,6 +476,7 @@ int main(int argc, char ** argv) {
 
     std::vector<float> pcm_vad_window;
     std::vector<float> pcm_block;
+    std::vector<float> pcm_lang;
     std::string last_sent;
 
     std::fprintf(stderr, "\nAi-Subtitler started.\n");
@@ -463,6 +497,7 @@ int main(int argc, char ** argv) {
             } else {
                 std::fprintf(stderr, "Streamer.bot startup-text sent.\n");
             }
+            bot.close();
         }
     }
 
@@ -509,23 +544,43 @@ int main(int argc, char ** argv) {
         wparams.print_special = false;
         wparams.print_timestamps = false;
         wparams.no_timestamps = params.fast ? true : false;
+        wparams.suppress_blank = true;
+        wparams.suppress_nst = params.fast ? true : false;
         wparams.translate = params.translate;
         wparams.single_segment = params.fast ? true : false;
-        wparams.max_tokens = params.fast ? 64 : 0;
+        wparams.max_tokens = params.max_tokens;
         wparams.no_context = params.fast ? true : false;
         if (params.fast) {
             // Greedy decoding: minimize extra sampling work.
             wparams.greedy.best_of = 1;
         }
         // Language selection:
-        // - If user asked for auto, keep auto behavior.
-        // - If user asked for a specific language other than English, honor it.
-        // - If language is English (default), auto-fallback to French when French is clearly more likely.
+        // - If user asked for auto, enable built-in whisper language detection.
+        // - If language is English (default) AND model is multilingual, auto-fallback to French when French is clearly more likely.
         std::string effective_language = params.language;
-        if (!params.fast && params.language == "en") {
-            effective_language = pick_language_en_fallback_fr(ctx, pcm_block, params.threads);
+        if (params.language == "auto") {
+            wparams.detect_language = true;
+            wparams.language = "auto";
+        } else {
+            wparams.detect_language = false;
+            if (params.language == "en" && whisper_is_multilingual(ctx)) {
+                if (params.fast) {
+                    // Keep fast mode snappy: detect from a short tail instead of the full block.
+                    const int32_t tail_ms = std::min<int32_t>(1500, std::max<int32_t>(500, params.length_ms));
+                    const size_t tail_samples = (size_t) (tail_ms * WHISPER_SAMPLE_RATE / 1000);
+                    pcm_lang.clear();
+                    if (pcm_block.size() > tail_samples) {
+                        pcm_lang.insert(pcm_lang.end(), pcm_block.end() - tail_samples, pcm_block.end());
+                    } else {
+                        pcm_lang = pcm_block;
+                    }
+                    effective_language = pick_language_en_fallback_fr(ctx, pcm_lang, params.threads);
+                } else {
+                    effective_language = pick_language_en_fallback_fr(ctx, pcm_block, params.threads);
+                }
+            }
+            wparams.language = effective_language.c_str();
         }
-        wparams.language = effective_language.c_str();
         wparams.n_threads = params.threads;
         wparams.audio_ctx = 0;
 
@@ -564,6 +619,9 @@ int main(int argc, char ** argv) {
             }
         }
 
+        std::printf("[%d] %s\n", iter++, text.c_str());
+        std::fflush(stdout);
+
         // Send to Streamer.bot (best-effort)
         {
             std::string err;
@@ -580,8 +638,6 @@ int main(int argc, char ** argv) {
         }
 
         last_sent = text;
-        std::printf("[%d] %s\n", iter++, text.c_str());
-        std::fflush(stdout);
 
         t_last = t_now;
     }

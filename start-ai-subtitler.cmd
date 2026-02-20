@@ -8,9 +8,9 @@ set "MODEL_TINY_EN=%~dp0models\ggml-tiny.en.bin"
 set "MODEL_MEDIUM=%~dp0models\ggml-medium.bin"
 
 set "MODEL="
-if exist "%MODEL_TINY_EN%" set "MODEL=%MODEL_TINY_EN%"
-if not "%MODEL%"=="" goto model_found
 if exist "%MODEL_TINY%" set "MODEL=%MODEL_TINY%"
+if not "%MODEL%"=="" goto model_found
+if exist "%MODEL_TINY_EN%" set "MODEL=%MODEL_TINY_EN%"
 if not "%MODEL%"=="" goto model_found
 if exist "%MODEL_MEDIUM%" set "MODEL=%MODEL_MEDIUM%"
 if not "%MODEL%"=="" goto model_found
@@ -29,6 +29,10 @@ exit /b 1
 
 echo Starting Ai-Subtitler...
 echo   Model: %MODEL%
+if /I "%MODEL%"=="%MODEL_MEDIUM%" (
+  echo   NOTE: Using medium model fallback. For a big speed boost, download tiny:
+  echo     submodules\whisper.cpp\models\download-ggml-model.cmd tiny .\models
+)
 if not "%~1"=="" (
 	echo   Mic: %~1
 ) else (

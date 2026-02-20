@@ -59,7 +59,7 @@ The build copies required DLLs next to the exe automatically.
 
 Put model files under `models/` (this folder is ignored by git).
 
-Example using whisper.cpp’s downloader:
+Default (recommended) model for speed:
 
 ```powershell
 New-Item -ItemType Directory -Force models | Out-Null
@@ -82,7 +82,7 @@ Notes:
 
 This is preconfigured for:
 
-- Model: prefers `models\ggml-tiny.en.bin` or `models\ggml-tiny.bin` (falls back to `models\ggml-medium.bin` if tiny is not present)
+- Model: prefers `models\ggml-tiny.bin` (multilingual), then `models\ggml-tiny.en.bin`, then falls back to `models\ggml-medium.bin`
 - Streamer.bot WS: `ws://127.0.0.1:8080/`
 - Action name: `AI Subtitler` (arg key: `AiText`)
 
@@ -124,6 +124,12 @@ Example (more accurate, slower):
 
 ```powershell
 .\run.ps1 --model (Resolve-Path .\models\ggml-medium.bin) --mic 0 --length-ms 30000
+```
+
+Ultra-low latency tuning (advanced):
+
+```powershell
+.\run.cmd --model .\models\ggml-tiny.bin --mic 0 --fast --length-ms 1500 --vad-check-ms 80 --vad-window-ms 600 --vad-last-ms 200 --max-tokens 16 --dedup-similarity 0.75
 ```
 
 ### Choose your microphone
