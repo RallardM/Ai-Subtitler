@@ -140,6 +140,13 @@ static float audio_activity_fraction(const std::vector<float> & pcm, float abs_t
     return (float) n_active / (float) pcm.size();
 }
 
+static bool is_exact_thank_you(const std::string & s) {
+    const auto w = split_words_lower_ascii(s);
+    if (w.size() == 2 && w[0] == "thank" && w[1] == "you") return true;
+    if (w.size() == 1 && w[0] == "thankyou") return true;
+    return false;
+}
+
 static bool icontains(const std::string & haystack, const std::string & needle) {
     if (needle.empty()) return true;
     auto tolower_u = [](unsigned char c) { return (unsigned char) std::tolower(c); };
@@ -663,7 +670,9 @@ int main(int argc, char ** argv) {
 
         std::string text;
         const int n_segments = whisper_full_n_segments(ctx);
+        float max_no_speech_prob = 0.0f;
         for (int i = 0; i < n_segments; ++i) {
+            max_no_speech_prob = std::max(max_no_speech_prob, whisper_full_get_segment_no_speech_prob(ctx, i));
             const char * seg = whisper_full_get_segment_text(ctx, i);
             if (seg) text += seg;
         }
@@ -677,6 +686,13 @@ int main(int argc, char ** argv) {
         // whisper.cpp can emit this special token when the audio block is effectively silence.
         // Don't send it to Streamer.bot.
         if (text == "[BLANK_AUDIO]") {
+            t_last = t_now;
+            continue;
+        }
+
+        // Tiny models can hallucinate short polite phrases after an utterance or during near-silence.
+        // Only suppress this in fast mode AND only when whisper itself says it's likely no-speech.
+        if (params.fast && is_exact_thank_you(text) && max_no_speech_prob >= 0.80f) {
             t_last = t_now;
             continue;
         }
