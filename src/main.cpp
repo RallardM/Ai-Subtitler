@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cctype>
+#include <cstdint>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -58,6 +59,7 @@ struct app_params {
     std::string startup_text;
 
     // misc
+    bool debug_thankyou = false;
     float dedup_similarity = 0.90f;
 };
 
@@ -140,6 +142,15 @@ static float audio_activity_fraction(const std::vector<float> & pcm, float abs_t
     return (float) n_active / (float) pcm.size();
 }
 
+static float audio_rms(const std::vector<float> & pcm) {
+    if (pcm.empty()) return 0.0f;
+    double sumsq = 0.0;
+    for (float v : pcm) {
+        sumsq += (double) v * (double) v;
+    }
+    return (float) std::sqrt(sumsq / (double) pcm.size());
+}
+
 static bool is_exact_thank_you(const std::string & s) {
     const auto w = split_words_lower_ascii(s);
     if (w.size() == 2 && w[0] == "thank" && w[1] == "you") return true;
@@ -178,15 +189,15 @@ static void print_usage(const char * exe) {
     std::fprintf(stderr, "  --device-index N          Capture device index (SDL2)\n");
     std::fprintf(stderr, "  --device-name <substring> Capture device name substring (preferred)\n");
     std::fprintf(stderr, "                           If neither is provided, the app will list devices and prompt (interactive shells only)\n");
-    std::fprintf(stderr, "  --length-ms N             Window length for VAD blocks (default: 30000)\n");
-    std::fprintf(stderr, "  --vad-check-ms N          How often to evaluate VAD (default: 2000; fast preset: 100)\n");
-    std::fprintf(stderr, "  --vad-window-ms N         Window size used for VAD evaluation (default: 2000; fast preset: 800)\n");
-    std::fprintf(stderr, "  --vad-last-ms N           Trailing tail that must be quiet to flush (default: 1000; fast preset: 350)\n");
+    std::fprintf(stderr, "  --length-ms N             Window length for VAD blocks (default: 30000; fast preset: 6000)\n");
+    std::fprintf(stderr, "  --vad-check-ms N          How often to evaluate VAD (default: 2000; fast preset: 150)\n");
+    std::fprintf(stderr, "  --vad-window-ms N         Window size used for VAD evaluation (default: 2000; fast preset: 1500)\n");
+    std::fprintf(stderr, "  --vad-last-ms N           Trailing tail that must be quiet to flush (default: 1000; fast preset: 650)\n");
     std::fprintf(stderr, "  --vad-thold X             VAD threshold (default: 0.60)\n");
     std::fprintf(stderr, "  --freq-thold X            High-pass cutoff (default: 100.0)\n\n");
 
     std::fprintf(stderr, "Decoding:\n");
-    std::fprintf(stderr, "  --max-tokens N            Max tokens per block (0 = no limit; fast preset: 32)\n\n");
+    std::fprintf(stderr, "  --max-tokens N            Max tokens per block (0 = no limit; fast preset: 48)\n\n");
 
     std::fprintf(stderr, "Streamer.bot:\n");
     std::fprintf(stderr, "  --ws-url ws://127.0.0.1:8080/   WebSocket URL\n");
@@ -196,6 +207,7 @@ static void print_usage(const char * exe) {
 
     std::fprintf(stderr, "Diagnostics:\n");
     std::fprintf(stderr, "  --startup-text <text>      Send a DoAction immediately after start (useful to verify Streamer.bot connectivity)\n\n");
+    std::fprintf(stderr, "  --debug-thankyou           Print debug info whenever output is exactly \"Thank you.\" (you can use this to tune filters)\n\n");
 
     std::fprintf(stderr, "Output filtering:\n");
     std::fprintf(stderr, "  --dedup-similarity X       Skip very similar repeats (default: 0.90; fast preset: 0.80)\n\n");
@@ -261,14 +273,14 @@ static bool parse_args(int argc, char ** argv, app_params & p) {
             p.fast = true;
             // Preset tuned for lower latency at the cost of accuracy.
             // Users can still override these later in the CLI.
-            // A shorter decode window reduces end-to-end delay.
-            p.length_ms = 3500;
-            // Reduce the "wait to flush" latency by checking VAD frequently and requiring a shorter silence tail.
-            p.vad_check_ms = 100;
-            p.vad_window_ms = 800;
-            p.vad_last_ms = 350;
+            // A shorter decode window reduces end-to-end delay, but too small can chop long sentences.
+            p.length_ms = 6000;
+            // Reduce the "wait to flush" latency by checking VAD frequently, but require enough silence tail to avoid mid-thought flushes.
+            p.vad_check_ms = 150;
+            p.vad_window_ms = 1500;
+            p.vad_last_ms = 650;
             // Reduce decoder work.
-            p.max_tokens = 32;
+            p.max_tokens = 48;
             // More aggressive de-dupe to avoid repeated overlap spam.
             p.dedup_similarity = 0.80f;
             p.threads = std::max(1, (int32_t) std::thread::hardware_concurrency());
@@ -328,6 +340,8 @@ static bool parse_args(int argc, char ** argv, app_params & p) {
             p.bot.arg_key = require_value("--arg-key");
         } else if (arg == "--startup-text") {
             p.startup_text = require_value("--startup-text");
+        } else if (arg == "--debug-thankyou") {
+            p.debug_thankyou = true;
         } else if (arg == "--dedup-similarity") {
             p.dedup_similarity = std::stof(require_value("--dedup-similarity"));
         } else {
@@ -460,8 +474,9 @@ int main(int argc, char ** argv) {
     params.vad_check_ms = std::max<int32_t>(50, params.vad_check_ms);
     params.vad_window_ms = std::max<int32_t>(200, params.vad_window_ms);
     params.vad_last_ms = std::max<int32_t>(50, params.vad_last_ms);
-    if (params.vad_last_ms > params.vad_window_ms) {
-        params.vad_window_ms = params.vad_last_ms;
+    // Important: whisper.cpp's vad_simple() requires vad_window_ms > vad_last_ms.
+    if (params.vad_window_ms <= params.vad_last_ms) {
+        params.vad_window_ms = params.vad_last_ms + 100;
     }
 
     // Decoding sanity
@@ -601,11 +616,15 @@ int main(int argc, char ** argv) {
             continue;
         }
 
+        const float block_frac = (params.fast || params.debug_thankyou) ? audio_activity_fraction(pcm_block, /*abs_thold=*/0.01f) : 0.0f;
+        const float block_rms  = params.debug_thankyou ? audio_rms(pcm_block) : 0.0f;
+        const float vad_frac   = params.debug_thankyou ? audio_activity_fraction(pcm_vad_window, /*abs_thold=*/0.01f) : 0.0f;
+        const float vad_rms    = params.debug_thankyou ? audio_rms(pcm_vad_window) : 0.0f;
+
         // Fast-mode guard: keyboard clicks / near-silence can trigger VAD and cause hallucinations like "thank you".
         // If the block has very low activity, drop it and clear the buffer so we don't retrigger on the same click.
         if (params.fast) {
-            const float frac = audio_activity_fraction(pcm_block, /*abs_thold=*/0.01f);
-            if (frac < 0.01f) {
+            if (block_frac < 0.01f) {
                 audio.clear();
                 t_last = t_now;
                 continue;
@@ -671,8 +690,25 @@ int main(int argc, char ** argv) {
         std::string text;
         const int n_segments = whisper_full_n_segments(ctx);
         float max_no_speech_prob = 0.0f;
+        std::vector<float> dbg_seg_ns;
+        std::vector<int> dbg_seg_tok;
+        std::vector<int64_t> dbg_seg_t0;
+        std::vector<int64_t> dbg_seg_t1;
+        if (params.debug_thankyou) {
+            dbg_seg_ns.reserve(n_segments);
+            dbg_seg_tok.reserve(n_segments);
+            dbg_seg_t0.reserve(n_segments);
+            dbg_seg_t1.reserve(n_segments);
+        }
         for (int i = 0; i < n_segments; ++i) {
-            max_no_speech_prob = std::max(max_no_speech_prob, whisper_full_get_segment_no_speech_prob(ctx, i));
+            const float ns = whisper_full_get_segment_no_speech_prob(ctx, i);
+            max_no_speech_prob = std::max(max_no_speech_prob, ns);
+            if (params.debug_thankyou) {
+                dbg_seg_ns.push_back(ns);
+                dbg_seg_tok.push_back(whisper_full_n_tokens(ctx, i));
+                dbg_seg_t0.push_back(whisper_full_get_segment_t0(ctx, i));
+                dbg_seg_t1.push_back(whisper_full_get_segment_t1(ctx, i));
+            }
             const char * seg = whisper_full_get_segment_text(ctx, i);
             if (seg) text += seg;
         }
@@ -690,9 +726,36 @@ int main(int argc, char ** argv) {
             continue;
         }
 
+        const bool is_thanks = is_exact_thank_you(text);
+        const bool suppress_thanks = params.fast && is_thanks && max_no_speech_prob >= 0.80f;
+
+        if (params.debug_thankyou && is_thanks) {
+            std::fprintf(stderr,
+                "[DBG thankyou] suppress=%d max_no_speech=%.2f block: frac=%.3f rms=%.6f vad: frac=%.3f rms=%.6f segs=%d\n",
+                suppress_thanks ? 1 : 0,
+                max_no_speech_prob,
+                block_frac,
+                block_rms,
+                vad_frac,
+                vad_rms,
+                n_segments);
+            for (int i = 0; i < n_segments; ++i) {
+                // whisper segment times are in 10ms units
+                const long long t0_ms = (long long) (dbg_seg_t0[i] * 10);
+                const long long t1_ms = (long long) (dbg_seg_t1[i] * 10);
+                std::fprintf(stderr,
+                    "  [DBG thankyou] seg=%d ns=%.2f tok=%d t=%lld-%lld(ms)\n",
+                    i,
+                    dbg_seg_ns[i],
+                    dbg_seg_tok[i],
+                    t0_ms,
+                    t1_ms);
+            }
+        }
+
         // Tiny models can hallucinate short polite phrases after an utterance or during near-silence.
         // Only suppress this in fast mode AND only when whisper itself says it's likely no-speech.
-        if (params.fast && is_exact_thank_you(text) && max_no_speech_prob >= 0.80f) {
+        if (suppress_thanks) {
             t_last = t_now;
             continue;
         }

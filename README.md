@@ -132,6 +132,8 @@ Ultra-low latency tuning (advanced):
 .\run.cmd --model .\models\ggml-tiny.bin --mic 0 --fast --length-ms 1500 --vad-check-ms 80 --vad-window-ms 600 --vad-last-ms 200 --max-tokens 16 --dedup-similarity 0.75
 ```
 
+Note: these values are extremely aggressive and can chop sentences on normal speech. If that happens, increase `--vad-last-ms`/`--vad-window-ms` and `--length-ms`.
+
 ### Choose your microphone
 
 List capture devices:
