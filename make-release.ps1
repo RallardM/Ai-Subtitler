@@ -33,8 +33,11 @@ Copy-Item -Force (Join-Path $BuildRelease "*") $StageDir
 
 $ExtraFiles = @(
   "start-ai-subtitler.cmd",
+  "debug-voice-gate.cmd",
   "download-model.cmd",
   "download-model.ps1",
+  "download-vad.cmd",
+  "download-vad.ps1",
   "run.cmd",
   "list-devices.cmd",
   "README.md"
@@ -55,7 +58,7 @@ $FastCmd = Join-Path $StageDir "Start (Fast, Mic 0).cmd"
 @(
   '@echo off',
   'setlocal EnableExtensions',
-  'call "%~dp0start-ai-subtitler.cmd" 0 --fast',
+  'call "%~dp0start-ai-subtitler.cmd" 0 --fast %*',
   'set "ERR=%errorlevel%"',
   'if not "%ERR%"=="0" echo(',
   'if not "%ERR%"=="0" echo Failed. errorlevel=%ERR%',

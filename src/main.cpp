@@ -64,7 +64,167 @@ struct app_params {
     // misc
     bool debug_thankyou = false;
     float dedup_similarity = 0.90f;
+
+    // voice gate (Silero VAD via whisper.cpp)
+    bool voice_gate = true;
+    bool debug_voice_gate = false;
+    bool trace_voice_gate = false;
+    std::string test_voice_gate_file;
+    std::string vad_model;
+    int32_t voice_stop_ms = 3000;
+    int32_t min_voice_ms = 600;
+    float vad_voice_threshold = 0.60f;
 };
+
+static void print_voice_gate_trace(FILE * f, const char * tag, const int64_t t_ms, const int64_t voice_ms, const int32_t block_ms) {
+    if (!f || !tag) return;
+    if (voice_ms >= 0 && block_ms >= 0) {
+        std::fprintf(f, "[VG] %s t=%lldms voice=%lldms block=%dms\n", tag, (long long) t_ms, (long long) voice_ms, (int) block_ms);
+    } else {
+        std::fprintf(f, "[VG] %s t=%lldms\n", tag, (long long) t_ms);
+    }
+    std::fflush(f);
+}
+
+static int64_t ms_since(const std::chrono::high_resolution_clock::time_point & t0,
+                        const std::chrono::high_resolution_clock::time_point & t1) {
+    return (int64_t) std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
+}
+
+static int run_test_voice_gate_on_file(const app_params & params) {
+    if (params.test_voice_gate_file.empty()) {
+        std::fprintf(stderr, "error: --test-voice-gate requires a file path\n");
+        return 1;
+    }
+    if (params.vad_model.empty()) {
+        std::fprintf(stderr, "error: --test-voice-gate requires a VAD model. Expected ./models/ggml-silero-v6.2.0.bin\n");
+        std::fprintf(stderr, "Hint: run .\\download-vad.cmd\n");
+        return 1;
+    }
+
+    std::vector<float> pcm;
+    std::vector<std::vector<float>> pcm_stereo;
+    if (!read_audio_data(params.test_voice_gate_file, pcm, pcm_stereo, /*stereo*/false)) {
+        std::fprintf(stderr, "error: failed to read audio file: %s\n", params.test_voice_gate_file.c_str());
+        return 2;
+    }
+    if (pcm.empty()) {
+        std::fprintf(stderr, "error: audio file is empty: %s\n", params.test_voice_gate_file.c_str());
+        return 2;
+    }
+
+    whisper_vad_context_params vcp = whisper_vad_default_context_params();
+    vcp.n_threads = std::max(1, params.threads);
+    vcp.use_gpu = false;
+    vcp.gpu_device = 0;
+
+    whisper_vad_context * vctx = whisper_vad_init_from_file_with_params(params.vad_model.c_str(), vcp);
+    if (!vctx) {
+        std::fprintf(stderr, "error: failed to init VAD model: %s\n", params.vad_model.c_str());
+        std::fprintf(stderr, "Hint: run .\\download-vad.cmd\n");
+        return 3;
+    }
+
+    whisper_vad_params vadp = whisper_vad_default_params();
+    vadp.threshold = params.vad_voice_threshold;
+    vadp.min_speech_duration_ms = 250;
+    vadp.min_silence_duration_ms = 200;
+    vadp.max_speech_duration_s = 30.0f;
+    vadp.speech_pad_ms = 100;
+    vadp.samples_overlap = 0.0f;
+
+    const int64_t total_samples = (int64_t) pcm.size();
+    const int64_t total_ms = (int64_t) ((1000.0 * (double) total_samples) / (double) WHISPER_SAMPLE_RATE);
+
+    std::fprintf(stderr, "\nVoice gate OFFLINE test\n");
+    std::fprintf(stderr, "- audio: %s\n", params.test_voice_gate_file.c_str());
+    std::fprintf(stderr, "- duration: %lldms (samples=%lld @ %dHz)\n", (long long) total_ms, (long long) total_samples, WHISPER_SAMPLE_RATE);
+    std::fprintf(stderr, "- vad_model: %s\n", params.vad_model.c_str());
+    std::fprintf(stderr, "- stop=%dms min=%dms thold=%.2f check=%dms window=%dms length=%dms\n\n",
+        params.voice_stop_ms,
+        params.min_voice_ms,
+        params.vad_voice_threshold,
+        params.vad_check_ms,
+        params.vad_window_ms,
+        params.length_ms);
+
+    bool in_voice = false;
+    bool silence_started = false;
+    int64_t t_voice_start_ms = 0;
+    int64_t t_last_voice_ms = 0;
+    int flushes = 0;
+
+    auto eval_at_ms = [&](const int64_t t_ms) {
+        const int64_t end_sample = std::min<int64_t>(total_samples, (t_ms * WHISPER_SAMPLE_RATE) / 1000);
+        const int64_t win_samples = (int64_t) ((int64_t) params.vad_window_ms * WHISPER_SAMPLE_RATE) / 1000;
+        const int64_t start_sample = std::max<int64_t>(0, end_sample - win_samples);
+
+        std::vector<float> window;
+        if (end_sample > start_sample) {
+            window.insert(window.end(), pcm.begin() + (size_t) start_sample, pcm.begin() + (size_t) end_sample);
+        }
+
+        bool voice_present = false;
+        if (!window.empty()) {
+            whisper_vad_segments * segs = whisper_vad_segments_from_samples(vctx, vadp, window.data(), (int) window.size());
+            voice_present = segs && whisper_vad_segments_n_segments(segs) > 0;
+            if (segs) whisper_vad_free_segments(segs);
+        }
+
+        if (voice_present) {
+            if (!in_voice) {
+                in_voice = true;
+                silence_started = false;
+                t_voice_start_ms = t_ms;
+                print_voice_gate_trace(stdout, "VOICE_START", t_ms, -1, -1);
+            }
+            t_last_voice_ms = t_ms;
+            return;
+        }
+
+        if (!in_voice) {
+            return;
+        }
+
+        if (!silence_started) {
+            silence_started = true;
+            print_voice_gate_trace(stdout, "VOICE_END", t_ms, -1, -1);
+        }
+
+        const int64_t silent_ms = t_ms - t_last_voice_ms;
+        if (silent_ms < params.voice_stop_ms) {
+            return;
+        }
+
+        const int64_t voice_ms = t_last_voice_ms - t_voice_start_ms;
+        if (voice_ms >= params.min_voice_ms) {
+            int32_t block_ms = (int32_t) std::min<int64_t>((int64_t) params.length_ms, t_ms - t_voice_start_ms);
+            block_ms = std::max<int32_t>(0, block_ms);
+            ++flushes;
+            print_voice_gate_trace(stdout, "FLUSH", t_ms, voice_ms, block_ms);
+        } else {
+            print_voice_gate_trace(stdout, "DROP_SHORT", t_ms, voice_ms, 0);
+        }
+
+        in_voice = false;
+        silence_started = false;
+    };
+
+    // Main scan over the file
+    const int64_t step_ms = std::max<int32_t>(50, params.vad_check_ms);
+    for (int64_t t_ms = 0; t_ms <= total_ms; t_ms += step_ms) {
+        eval_at_ms(t_ms);
+    }
+
+    // Ensure any trailing utterance flushes by simulating extra silence.
+    for (int64_t t_ms = total_ms + step_ms; t_ms <= total_ms + params.voice_stop_ms + step_ms; t_ms += step_ms) {
+        eval_at_ms(t_ms);
+    }
+
+    whisper_vad_free(vctx);
+    std::fprintf(stderr, "\nVoice gate OFFLINE test complete: flushes=%d\n", flushes);
+    return 0;
+}
 
 static std::string trim_and_collapse_ws(const std::string & s) {
     std::string out;
@@ -141,6 +301,25 @@ static double clamp_double(const double v, const double lo, const double hi) {
     if (v < lo) return lo;
     if (v > hi) return hi;
     return v;
+}
+
+struct whisper_log_filter_cfg {
+    bool suppress_all = false;
+    bool suppress_vad = false;
+};
+
+static void whisper_log_filter_cb(ggml_log_level /*level*/, const char * text, void * user_data) {
+    if (!text) return;
+    const auto * cfg = (const whisper_log_filter_cfg *) user_data;
+    if (cfg && cfg->suppress_all) {
+        return;
+    }
+    if (cfg && cfg->suppress_vad) {
+        if (std::strstr(text, "whisper_vad_") != nullptr) {
+            return;
+        }
+    }
+    std::fputs(text, stderr);
 }
 
 struct streamerbot_send_item {
@@ -396,6 +575,14 @@ static void print_usage(const char * exe) {
     std::fprintf(stderr, "  --vad-thold X             VAD threshold (default: 0.60)\n");
     std::fprintf(stderr, "  --freq-thold X            High-pass cutoff (default: 100.0)\n\n");
 
+    std::fprintf(stderr, "Voice gate (speech vs noise):\n");
+    std::fprintf(stderr, "  --no-voice-gate           Disable voice/noise gating and use the simple silence-tail VAD\n");
+    std::fprintf(stderr, "  --trace-voice-gate        Print voice gate events (VOICE_START/VOICE_END/FLUSH)\n");
+    std::fprintf(stderr, "  --vad-model <path>        Path to Silero VAD model (default: ./models/ggml-silero-v6.2.0.bin if present)\n");
+    std::fprintf(stderr, "  --voice-stop-ms N         How long voice must be absent before flushing (default: 3000)\n");
+    std::fprintf(stderr, "  --min-voice-ms N          Minimum voice duration required to send to Whisper (default: 600)\n");
+    std::fprintf(stderr, "  --vad-voice-thold X       Silero VAD probability threshold (default: 0.60)\n\n");
+
     std::fprintf(stderr, "Decoding:\n");
     std::fprintf(stderr, "  --max-tokens N            Max tokens per block (0 = no limit; fast preset: 48)\n\n");
 
@@ -408,6 +595,8 @@ static void print_usage(const char * exe) {
     std::fprintf(stderr, "Diagnostics:\n");
     std::fprintf(stderr, "  --startup-text <text>      Send a DoAction immediately after start (useful to verify Streamer.bot connectivity)\n\n");
     std::fprintf(stderr, "  --debug-thankyou           Print debug info whenever output is exactly \"Thank you.\" (you can use this to tune filters)\n\n");
+    std::fprintf(stderr, "  --debug-voice-gate         Debug-only: continuously print DETECT VOICE / DOES NOT DETECT VOICE (no Whisper, no Streamer.bot)\n\n");
+    std::fprintf(stderr, "  --test-voice-gate <file>   Offline test: run voice gating on an audio file and print VOICE_* events (no mic, no Whisper)\n\n");
 
     std::fprintf(stderr, "Output filtering:\n");
     std::fprintf(stderr, "  --dedup-similarity X       Skip very similar repeats (default: 0.90; fast preset: 0.80)\n\n");
@@ -551,6 +740,22 @@ static bool parse_args(int argc, char ** argv, app_params & p) {
             p.startup_text = require_value("--startup-text");
         } else if (arg == "--debug-thankyou") {
             p.debug_thankyou = true;
+        } else if (arg == "--debug-voice-gate") {
+            p.debug_voice_gate = true;
+        } else if (arg == "--trace-voice-gate") {
+            p.trace_voice_gate = true;
+        } else if (arg == "--no-voice-gate") {
+            p.voice_gate = false;
+        } else if (arg == "--test-voice-gate") {
+            p.test_voice_gate_file = require_value("--test-voice-gate");
+        } else if (arg == "--vad-model") {
+            p.vad_model = require_value("--vad-model");
+        } else if (arg == "--voice-stop-ms") {
+            p.voice_stop_ms = std::stoi(require_value("--voice-stop-ms"));
+        } else if (arg == "--min-voice-ms") {
+            p.min_voice_ms = std::stoi(require_value("--min-voice-ms"));
+        } else if (arg == "--vad-voice-thold") {
+            p.vad_voice_threshold = std::stof(require_value("--vad-voice-thold"));
         } else if (arg == "--dedup-similarity") {
             p.dedup_similarity = std::stof(require_value("--dedup-similarity"));
         } else {
@@ -559,6 +764,22 @@ static bool parse_args(int argc, char ** argv, app_params & p) {
         }
     }
     return true;
+}
+
+static std::string pick_default_vad_model_path() {
+    const char * candidates[] = {
+        "models/ggml-silero-v6.2.0.bin",
+    };
+
+    for (const char * rel : candidates) {
+        FILE * f = std::fopen(rel, "rb");
+        if (f) {
+            std::fclose(f);
+            return std::string(rel);
+        }
+    }
+
+    return {};
 }
 
 static std::string pick_default_model_path() {
@@ -699,6 +920,34 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
+    const bool voice_gate_requested_by_default_or_cli = params.voice_gate;
+
+    // Offline voice-gate test mode (no mic, no Whisper, no Streamer.bot)
+    if (!params.test_voice_gate_file.empty()) {
+        // Suppress whisper/ggml logs so output is only our test events.
+        whisper_log_filter_cfg log_cfg{};
+        log_cfg.suppress_all = true;
+        whisper_log_set(whisper_log_filter_cb, &log_cfg);
+
+        // Apply default VAD model probe if user didn't provide --vad-model.
+        if (params.vad_model.empty()) {
+            params.vad_model = pick_default_vad_model_path();
+        }
+
+        return run_test_voice_gate_on_file(params);
+    }
+
+    whisper_log_filter_cfg log_cfg{};
+    if (params.debug_voice_gate) {
+        // Debug voice gate should print ONLY our own DETECT/DOES NOT DETECT lines.
+        log_cfg.suppress_all = true;
+        whisper_log_set(whisper_log_filter_cb, &log_cfg);
+    } else if (params.voice_gate) {
+        // Keep normal whisper logs, but suppress Silero VAD spam.
+        log_cfg.suppress_vad = true;
+        whisper_log_set(whisper_log_filter_cb, &log_cfg);
+    }
+
     // Sanity/clamping to avoid invalid VAD windows.
     params.vad_check_ms = std::max<int32_t>(50, params.vad_check_ms);
     params.vad_window_ms = std::max<int32_t>(200, params.vad_window_ms);
@@ -717,15 +966,37 @@ int main(int argc, char ** argv) {
     if (params.dedup_similarity < 0.0f) params.dedup_similarity = 0.0f;
     if (params.dedup_similarity > 1.0f) params.dedup_similarity = 1.0f;
 
+    // Voice gate sanity
+    params.voice_stop_ms = std::max<int32_t>(250, params.voice_stop_ms);
+    params.min_voice_ms = std::max<int32_t>(0, params.min_voice_ms);
+    if (params.vad_voice_threshold < 0.0f) params.vad_voice_threshold = 0.0f;
+    if (params.vad_voice_threshold > 1.0f) params.vad_voice_threshold = 1.0f;
+
+    // Voice gating needs enough ring-buffer history to include both:
+    // - the full spoken segment, and
+    // - the required trailing no-voice time (voice_stop_ms)
+    // The --fast preset reduces length_ms; enforce a safer minimum when voice gate is enabled.
+    if (params.voice_gate) {
+        const int32_t min_len_ms = std::max<int32_t>(20000, params.voice_stop_ms + 10000);
+        if (params.length_ms < min_len_ms) {
+            params.length_ms = min_len_ms;
+        }
+    }
+
     if (params.list_devices) {
         return sdl_list_devices_only() ? 0 : 2;
+    }
+
+    if (params.vad_model.empty()) {
+        params.vad_model = pick_default_vad_model_path();
     }
 
     if (params.model.empty()) {
         params.model = pick_default_model_path();
     }
 
-    if (params.model.empty()) {
+    // We do not require a Whisper model for --debug-voice-gate.
+    if (!params.debug_voice_gate && params.model.empty()) {
         std::fprintf(stderr, "error: --model is required (or place a model under ./models)\n");
         print_usage(argv[0]);
         return 1;
@@ -759,6 +1030,106 @@ int main(int argc, char ** argv) {
     }
     audio.resume();
 
+    // init Silero VAD (used to distinguish speech vs noise/music)
+    whisper_vad_context * vctx = nullptr;
+    whisper_vad_params vadp = whisper_vad_default_params();
+    vadp.threshold = params.vad_voice_threshold;
+    // Filter out brief noise and glitches.
+    vadp.min_speech_duration_ms = 250;
+    vadp.min_silence_duration_ms = 200;
+    vadp.max_speech_duration_s = 30.0f;
+    vadp.speech_pad_ms = 100;
+    vadp.samples_overlap = 0.0f;
+
+    if (params.voice_gate || params.debug_voice_gate) {
+        if (params.vad_model.empty()) {
+            if (params.debug_voice_gate) {
+                std::fprintf(stderr, "error: voice gate requires a VAD model. Expected ./models/ggml-silero-v6.2.0.bin\n");
+                std::fprintf(stderr, "Hint: run .\\download-vad.cmd\n");
+                return 1;
+            }
+            std::fprintf(stderr, "warning: voice gate enabled but no VAD model found (expected ./models/ggml-silero-v6.2.0.bin).\n");
+            std::fprintf(stderr, "         Falling back to simple VAD. To enable voice/noise gating, run: .\\download-vad.cmd\n");
+            params.voice_gate = false;
+        } else {
+            whisper_vad_context_params vcp = whisper_vad_default_context_params();
+            vcp.n_threads = std::max(1, params.threads);
+            vcp.use_gpu = false;
+            vcp.gpu_device = 0;
+            vctx = whisper_vad_init_from_file_with_params(params.vad_model.c_str(), vcp);
+            if (!vctx) {
+                if (params.debug_voice_gate) {
+                    std::fprintf(stderr, "error: failed to init VAD model: %s\n", params.vad_model.c_str());
+                    std::fprintf(stderr, "Hint: run .\\download-vad.cmd\n");
+                    return 1;
+                }
+                std::fprintf(stderr, "warning: failed to init VAD model (%s). Falling back to simple VAD.\n", params.vad_model.c_str());
+                params.voice_gate = false;
+            }
+        }
+    }
+
+    if (!params.debug_voice_gate) {
+        if (!voice_gate_requested_by_default_or_cli) {
+            std::fprintf(stderr, "Voice gate: OFF (--no-voice-gate)\n");
+        } else if (params.voice_gate && vctx) {
+            std::fprintf(stderr,
+                "Voice gate: ON (Silero) stop=%dms min=%dms thold=%.2f model=%s\n",
+                params.voice_stop_ms,
+                params.min_voice_ms,
+                params.vad_voice_threshold,
+                params.vad_model.c_str());
+        } else {
+            std::fprintf(stderr,
+                "Voice gate: OFF (fallback to simple VAD; missing/failed Silero model). Expected: ./models/ggml-silero-v6.2.0.bin\n");
+        }
+    }
+
+    // Debug-only voice gate mode: prints only DETECT VOICE / DOES NOT DETECT VOICE.
+    if (params.debug_voice_gate) {
+        // Tighten responsiveness for debugging: smaller analysis window and lower duration thresholds.
+        whisper_vad_params vadp_dbg = vadp;
+        vadp_dbg.min_speech_duration_ms = 50;
+        vadp_dbg.min_silence_duration_ms = 50;
+        vadp_dbg.speech_pad_ms = 0;
+
+        std::vector<float> pcm_dbg;
+        auto t_last_dbg = std::chrono::high_resolution_clock::now();
+        constexpr int32_t k_debug_period_ms = 10;
+        constexpr int32_t k_debug_window_ms = 200;
+
+        while (true) {
+            if (!sdl_poll_events()) {
+                break;
+            }
+
+            const auto t_now = std::chrono::high_resolution_clock::now();
+            const auto t_diff = std::chrono::duration_cast<std::chrono::milliseconds>(t_now - t_last_dbg).count();
+            if (t_diff < k_debug_period_ms) {
+                const int64_t remaining = (int64_t) k_debug_period_ms - t_diff;
+                std::this_thread::sleep_for(std::chrono::milliseconds((int) std::max<int64_t>(1, std::min<int64_t>(5, remaining))));
+                continue;
+            }
+
+            audio.get(k_debug_window_ms, pcm_dbg);
+            bool voice = false;
+            if (vctx && !pcm_dbg.empty()) {
+                whisper_vad_segments * segs = whisper_vad_segments_from_samples(vctx, vadp_dbg, pcm_dbg.data(), (int) pcm_dbg.size());
+                voice = segs && whisper_vad_segments_n_segments(segs) > 0;
+                if (segs) whisper_vad_free_segments(segs);
+            }
+
+            std::puts(voice ? "DETECT VOICE" : "DOES NOT DETECT VOICE");
+            std::fflush(stdout);
+
+            t_last_dbg = t_now;
+        }
+
+        if (vctx) whisper_vad_free(vctx);
+        audio.pause();
+        return 0;
+    }
+
     // init whisper
     if (params.language != "auto" && whisper_lang_id(params.language.c_str()) == -1) {
         std::fprintf(stderr, "error: unknown language '%s'\n", params.language.c_str());
@@ -790,6 +1161,12 @@ int main(int argc, char ** argv) {
     std::vector<float> pcm_block;
     std::vector<float> pcm_lang;
     std::string last_sent;
+
+    bool in_voice = false;
+    auto t_voice_start = std::chrono::high_resolution_clock::now();
+    auto t_last_voice  = t_voice_start;
+    bool trace_silence_started = false;
+    const auto t_trace0 = std::chrono::high_resolution_clock::now();
 
     std::fprintf(stderr, "\nAi-Subtitler started.\n");
     std::fprintf(stderr, "- Capture device index: %d\n", params.device_index);
@@ -838,16 +1215,95 @@ int main(int argc, char ** argv) {
             continue;
         }
 
-        // In whisper.cpp, vad_simple() returns true when the last part of the window is relatively silent.
-        if (!::vad_simple(pcm_vad_window, WHISPER_SAMPLE_RATE, params.vad_last_ms, params.vad_thold, params.freq_thold, false)) {
-            t_last = t_now;
-            continue;
+        bool have_pcm_block = false;
+        bool gated_block = false;
+
+        // Voice gate mode: only run Whisper when speech has ended for long enough.
+        if (params.voice_gate && vctx) {
+            bool voice_present = false;
+            whisper_vad_segments * segs = whisper_vad_segments_from_samples(vctx, vadp, pcm_vad_window.data(), (int) pcm_vad_window.size());
+            voice_present = segs && whisper_vad_segments_n_segments(segs) > 0;
+            if (segs) whisper_vad_free_segments(segs);
+
+            if (voice_present) {
+                if (!in_voice) {
+                    in_voice = true;
+                    t_voice_start = t_now;
+                    if (params.trace_voice_gate) {
+                        trace_silence_started = false;
+                        print_voice_gate_trace(stderr, "VOICE_START", ms_since(t_trace0, t_now), -1, -1);
+                    }
+                }
+                t_last_voice = t_now;
+                t_last = t_now;
+                continue;
+            }
+
+            if (in_voice) {
+                if (params.trace_voice_gate && !trace_silence_started) {
+                    trace_silence_started = true;
+                    print_voice_gate_trace(stderr, "VOICE_END", ms_since(t_trace0, t_now), -1, -1);
+                }
+                const auto silent_ms = (int64_t) std::chrono::duration_cast<std::chrono::milliseconds>(t_now - t_last_voice).count();
+                if (silent_ms >= params.voice_stop_ms) {
+                    const auto voice_ms = (int64_t) std::chrono::duration_cast<std::chrono::milliseconds>(t_last_voice - t_voice_start).count();
+
+                    if (voice_ms >= params.min_voice_ms) {
+                        int32_t block_ms = (int32_t) std::chrono::duration_cast<std::chrono::milliseconds>(t_now - t_voice_start).count();
+                        block_ms = std::max<int32_t>(0, std::min<int32_t>(block_ms, params.length_ms));
+
+                        if (params.trace_voice_gate) {
+                            print_voice_gate_trace(stderr, "FLUSH", ms_since(t_trace0, t_now), voice_ms, block_ms);
+                        }
+
+                        audio.get(block_ms, pcm_block);
+                        if (pcm_block.size() >= (size_t) (WHISPER_SAMPLE_RATE * 0.5)) {
+                            have_pcm_block = true;
+                            gated_block = true;
+                        } else {
+                            audio.clear();
+                            in_voice = false;
+                            t_last = t_now;
+                            continue;
+                        }
+                    } else {
+                        // Too short: likely a click / noise burst.
+                        if (params.trace_voice_gate) {
+                            print_voice_gate_trace(stderr, "DROP_SHORT", ms_since(t_trace0, t_now), voice_ms, 0);
+                        }
+                        audio.clear();
+                        in_voice = false;
+                        trace_silence_started = false;
+                        t_last = t_now;
+                        continue;
+                    }
+
+                    // Reset for next utterance.
+                    audio.clear();
+                    in_voice = false;
+                    trace_silence_started = false;
+                } else {
+                    t_last = t_now;
+                    continue;
+                }
+            } else {
+                t_last = t_now;
+                continue;
+            }
         }
 
-        audio.get(params.length_ms, pcm_block);
-        if (pcm_block.size() < (size_t) (WHISPER_SAMPLE_RATE * 0.5)) {
-            t_last = t_now;
-            continue;
+        if (!have_pcm_block) {
+            // In whisper.cpp, vad_simple() returns true when the last part of the window is relatively silent.
+            if (!::vad_simple(pcm_vad_window, WHISPER_SAMPLE_RATE, params.vad_last_ms, params.vad_thold, params.freq_thold, false)) {
+                t_last = t_now;
+                continue;
+            }
+
+            audio.get(params.length_ms, pcm_block);
+            if (pcm_block.size() < (size_t) (WHISPER_SAMPLE_RATE * 0.5)) {
+                t_last = t_now;
+                continue;
+            }
         }
 
         const float block_frac = (params.fast || params.debug_thankyou) ? audio_activity_fraction(pcm_block, /*abs_thold=*/0.01f) : 0.0f;
@@ -857,7 +1313,7 @@ int main(int argc, char ** argv) {
 
         // Fast-mode guard: keyboard clicks / near-silence can trigger VAD and cause hallucinations like "thank you".
         // If the block has very low activity, drop it and clear the buffer so we don't retrigger on the same click.
-        if (params.fast) {
+        if (params.fast && !gated_block) {
             if (block_frac < 0.01f) {
                 audio.clear();
                 t_last = t_now;
@@ -1026,6 +1482,7 @@ int main(int argc, char ** argv) {
     bot_sender.stop_and_join(/*drain*/true);
 
     audio.pause();
+    if (vctx) whisper_vad_free(vctx);
     whisper_print_timings(ctx);
     whisper_free(ctx);
     return 0;

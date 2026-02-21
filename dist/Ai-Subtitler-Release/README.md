@@ -119,6 +119,83 @@ Tip: you can also pass extra flags after the mic selection, for example:
 .\start-ai-subtitler.cmd 0 --debug-thankyou
 ```
 
+### Voice gate (speech vs noise)
+
+By default, Ai-Subtitler uses a small Silero VAD model to detect real voice. This voice gate is used to decide what audio gets flushed and sent to Whisper.
+
+It does **not** require a special argument to enable it.
+It is active automatically when `models/ggml-silero-v6.2.0.bin` exists and the app prints `Voice gate: ON (Silero) ...` on startup.
+
+When active, the app will only send audio to Whisper after:
+
+- You spoke for at least `--min-voice-ms` (default: 600ms)
+- Then you stopped speaking for `--voice-stop-ms` (default: 3000ms)
+
+This helps avoid transcribing keyboard clicks, music, or silence.
+
+#### Download the VAD model
+
+The Silero VAD model is **separate** from the Whisper ASR model.
+
+```powershell
+.\download-vad.cmd
+```
+
+This downloads `models/ggml-silero-v6.2.0.bin`.
+
+#### Confirm you are testing the voice gate (important)
+
+On startup, the app prints a banner showing the actual mode:
+
+- `Voice gate: ON (Silero) ...`  (this means the voice detection system is active)
+- `Voice gate: OFF (--no-voice-gate)`
+- `Voice gate: OFF (fallback to simple VAD; missing/failed Silero model) ...`
+
+If you see a fallback message, run `.\download-vad.cmd`.
+
+To disable the voice gate (and use the simple silence-tail VAD), run with `--no-voice-gate`.
+
+#### Debug voice detection only (no Whisper, no Streamer.bot)
+
+```powershell
+.\debug-voice-gate.cmd 0
+```
+
+It prints only:
+
+- `DETECT VOICE`
+- `DOES NOT DETECT VOICE`
+
+#### Trace voice gate events (live mic)
+
+If you want to *prove* the gating behavior on your microphone, add `--trace-voice-gate`.
+
+Release ZIP example (one-click launcher + tracing):
+
+```powershell
+.\start-ai-subtitler.cmd 0 --trace-voice-gate
+```
+
+```powershell
+.\run.ps1 --model .\models\ggml-tiny.bin --mic 0 --fast --trace-voice-gate
+```
+
+This prints events like:
+
+- `[VG] VOICE_START ...`
+- `[VG] VOICE_END ...`
+- `[VG] FLUSH ...` (this is when Whisper will run)
+
+#### Deterministic offline test (no mic)
+
+There is also an offline test mode that runs the voice gate on an audio file and prints the same events.
+
+This repo already includes a sample file from the whisper.cpp submodule:
+
+```powershell
+.\run.ps1 --test-voice-gate submodules\whisper.cpp\samples\jfk.wav --vad-model .\models\ggml-silero-v6.2.0.bin
+```
+
 PowerShell tip: if you ever run into execution quirks, this form also works:
 
 ```powershell
