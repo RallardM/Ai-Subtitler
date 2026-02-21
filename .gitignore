@@ -22,3 +22,5 @@ models/**/*.bin
 models/**/*.gguf
 models/**/*.pt
 models/**/*.pth
+
+dist/Ai-Subtitler-Release/models/**/*.bin
