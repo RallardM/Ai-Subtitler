@@ -12,10 +12,13 @@
 #include <cctype>
 #include <cstdint>
 #include <cmath>
+#include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <iostream>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -86,6 +89,194 @@ static std::string trim_and_collapse_ws(const std::string & s) {
     while (!out.empty() && out.back() == ' ') out.pop_back();
     return out;
 }
+
+static std::string wrap_text_wordwise_cols(const std::string & s, const size_t cols) {
+    if (cols == 0 || s.size() <= cols) {
+        return s;
+    }
+
+    // Assumes input already has collapsed whitespace (single spaces).
+    std::string out;
+    out.reserve(s.size() + s.size() / cols + 8);
+
+    size_t i = 0;
+    size_t line_len = 0;
+
+    while (i < s.size()) {
+        while (i < s.size() && s[i] == ' ') {
+            ++i;
+        }
+        if (i >= s.size()) {
+            break;
+        }
+
+        const size_t word_start = i;
+        while (i < s.size() && s[i] != ' ') {
+            ++i;
+        }
+        const size_t word_len = i - word_start;
+
+        if (out.empty() || line_len == 0) {
+            out.append(s, word_start, word_len);
+            line_len = word_len;
+            continue;
+        }
+
+        // Add word on current line if it fits; otherwise wrap to next line.
+        if (line_len + 1 + word_len <= cols) {
+            out.push_back(' ');
+            out.append(s, word_start, word_len);
+            line_len += 1 + word_len;
+        } else {
+            out.push_back('\n');
+            out.append(s, word_start, word_len);
+            line_len = word_len;
+        }
+    }
+
+    return out;
+}
+
+static double clamp_double(const double v, const double lo, const double hi) {
+    if (v < lo) return lo;
+    if (v > hi) return hi;
+    return v;
+}
+
+struct streamerbot_send_item {
+    std::string text;
+    size_t raw_len = 0; // original transcript length (including spaces), excluding any wrapping newlines
+};
+
+class streamerbot_sender {
+public:
+    explicit streamerbot_sender(streamerbot_ws_config cfg)
+        : m_cfg(std::move(cfg))
+        , m_thread([this]() { this->run(); }) {
+    }
+
+    ~streamerbot_sender() {
+        stop_and_join(/*drain*/true);
+    }
+
+    streamerbot_sender(const streamerbot_sender &) = delete;
+    streamerbot_sender & operator=(const streamerbot_sender &) = delete;
+
+    void enqueue(streamerbot_send_item item) {
+        {
+            std::lock_guard<std::mutex> lock(m_mu);
+            if (m_stop) {
+                return;
+            }
+            m_q.push_back(std::move(item));
+        }
+        m_cv.notify_one();
+    }
+
+    void stop_and_join(const bool drain) {
+        {
+            std::lock_guard<std::mutex> lock(m_mu);
+            if (m_stopped) {
+                // Already joined.
+                return;
+            }
+            m_stop = true;
+            if (!drain) {
+                m_q.clear();
+            }
+        }
+        m_cv.notify_one();
+        if (m_thread.joinable()) {
+            m_thread.join();
+        }
+        {
+            std::lock_guard<std::mutex> lock(m_mu);
+            m_stopped = true;
+        }
+    }
+
+private:
+    static std::chrono::milliseconds compute_delay_ms(const size_t raw_len, const size_t backlog_remaining) {
+        // Length-based reading delay, clamped to [2s, 4s].
+        // When the queue is backing up, speed up slightly (but never below 2s).
+        constexpr double k_min_s = 2.0;
+        constexpr double k_max_s = 4.0;
+        constexpr double k_base_chars_per_s = 16.0;
+        constexpr size_t k_soft_backlog = 5;
+
+        double speedup = 1.0;
+        if (backlog_remaining > k_soft_backlog) {
+            // +25% chars/s per extra queued message, capped.
+            const double extra = 0.25 * (double) (backlog_remaining - k_soft_backlog);
+            speedup = 1.0 + std::min(2.0, extra); // cap at 3x
+        }
+
+        const double cps = k_base_chars_per_s * speedup;
+        const double delay_s = clamp_double((double) raw_len / cps, k_min_s, k_max_s);
+        const int ms = (int) std::llround(delay_s * 1000.0);
+        return std::chrono::milliseconds(std::max(0, ms));
+    }
+
+    void run() {
+        streamerbot_ws_client bot;
+
+        while (true) {
+            streamerbot_send_item item;
+            size_t backlog_remaining = 0;
+
+            {
+                std::unique_lock<std::mutex> lock(m_mu);
+                m_cv.wait(lock, [&]() { return m_stop || !m_q.empty(); });
+
+                if (m_q.empty()) {
+                    if (m_stop) {
+                        break;
+                    }
+                    continue;
+                }
+
+                item = std::move(m_q.front());
+                m_q.pop_front();
+                backlog_remaining = m_q.size();
+            }
+
+            // Best-effort send (same behavior as the main loop used to have).
+            {
+                std::string err;
+                if (!bot.connect_and_handshake(m_cfg, err)) {
+                    std::fprintf(stderr, "Streamer.bot connect failed (%s).\n", err.c_str());
+                } else {
+                    if (!bot.do_action_text(m_cfg, item.text, err)) {
+                        std::fprintf(stderr, "DoAction failed (%s).\n", err.c_str());
+                    }
+                }
+                bot.close();
+            }
+
+            // If stopping, drain quickly (no additional delay).
+            {
+                std::lock_guard<std::mutex> lock(m_mu);
+                if (m_stop) {
+                    if (m_q.empty()) {
+                        break;
+                    }
+                    continue;
+                }
+            }
+
+            std::this_thread::sleep_for(compute_delay_ms(item.raw_len, backlog_remaining));
+        }
+    }
+
+private:
+    streamerbot_ws_config m_cfg;
+    std::mutex m_mu;
+    std::condition_variable m_cv;
+    std::deque<streamerbot_send_item> m_q;
+    bool m_stop = false;
+    bool m_stopped = false;
+    std::thread m_thread;
+};
 
 static std::vector<std::string> split_words_lower_ascii(const std::string & s) {
     std::vector<std::string> out;
@@ -593,6 +784,7 @@ int main(int argc, char ** argv) {
     }
 
     streamerbot_ws_client bot;
+    streamerbot_sender bot_sender(params.bot);
 
     std::vector<float> pcm_vad_window;
     std::vector<float> pcm_block;
@@ -817,28 +1009,21 @@ int main(int argc, char ** argv) {
             }
         }
 
-        std::printf("[%d] %s\n", iter++, text.c_str());
+        const size_t k_wrap_cols = 30;
+        const std::string text_wrapped = (text.size() > k_wrap_cols) ? wrap_text_wordwise_cols(text, k_wrap_cols) : text;
+
+        std::printf("[%d] %s\n", iter++, text_wrapped.c_str());
         std::fflush(stdout);
 
-        // Send to Streamer.bot (best-effort)
-        {
-            std::string err;
-            // Keep the connection short-lived to avoid servers that close idle/unread sockets.
-            // This is sentence-level traffic, so reconnect overhead is acceptable.
-            if (!bot.connect_and_handshake(params.bot, err)) {
-                std::fprintf(stderr, "Streamer.bot connect failed (%s).\n", err.c_str());
-            } else {
-                if (!bot.do_action_text(params.bot, text, err)) {
-                    std::fprintf(stderr, "DoAction failed (%s).\n", err.c_str());
-                }
-            }
-            bot.close();
-        }
+        // Enqueue for Streamer.bot sending (length-based throttling handled by worker thread).
+        bot_sender.enqueue(streamerbot_send_item{ text_wrapped, text.size() });
 
         last_sent = text;
 
         t_last = t_now;
     }
+
+    bot_sender.stop_and_join(/*drain*/true);
 
     audio.pause();
     whisper_print_timings(ctx);
