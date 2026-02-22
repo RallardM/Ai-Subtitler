@@ -120,6 +120,18 @@ Tip: you can also pass extra flags after the mic selection, for example:
 .\start-ai-subtitler.cmd 0 --debug-thankyou
 ```
 
+#### Suspect debug logging (hidden JSONL + optional WAV)
+
+If you are chasing short hallucinations like `Thank you.` / lone `you` / weird glyphs, run with:
+
+```powershell
+.\start-ai-subtitler.cmd 0 --quiet --suspect-log .\suspect.jsonl --suspect-dump-dir .\suspect-audio
+```
+
+If you want to *force* suppression of the exact single-word output `you` (common noise mis-transcription), add `--suppress-lone-you`.
+
+This keeps the console output clean (just transcripts) while writing detailed JSONL entries only when output looks suspect. When `--suspect-dump-dir` is set, it also dumps the exact audio block as a `.wav` for those suspect events.
+
 In the Release ZIP, you can double-click `Start (Fast, Mic 0).cmd` (portable launcher). It already keeps the console open.
 
 If you launch via a Windows shortcut and the console closes too quickly, add `--keep-open` (launcher-only) to keep the window open after the app exits:
@@ -150,7 +162,17 @@ It is active automatically when `models/ggml-silero-v6.2.0.bin` exists and the a
 When active, the app will only send audio to Whisper after:
 
 - You spoke for at least `--min-voice-ms` (default: 600ms)
-- Then you stopped speaking for `--voice-stop-ms` (default: 3000ms)
+- Then you stopped speaking for `--voice-stop-ms` (default: 930ms)
+
+The Silero voice detector sensitivity is controlled by:
+
+- `--vad-voice-thold` (default: 0.72)
+
+If you want to tune this value on your mic (and keep it from falsely detecting voice in silence), use:
+
+```powershell
+.\tune-vad-voice-thold.cmd 0
+```
 
 This helps avoid transcribing keyboard clicks, music, or silence.
 
