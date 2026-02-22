@@ -69,6 +69,7 @@ struct app_params {
     bool voice_gate = true;
     bool debug_voice_gate = false;
     bool trace_voice_gate = false;
+    bool trace_voice_gate_status = false;
     std::string test_voice_gate_file;
     std::string vad_model;
     int32_t voice_stop_ms = 3000;
@@ -89,6 +90,29 @@ static void print_voice_gate_trace(FILE * f, const char * tag, const int64_t t_m
 static int64_t ms_since(const std::chrono::high_resolution_clock::time_point & t0,
                         const std::chrono::high_resolution_clock::time_point & t1) {
     return (int64_t) std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
+}
+
+static void print_voice_gate_status(FILE * f,
+                                   const int64_t t_ms,
+                                   const bool in_voice,
+                                   const bool voice_present,
+                                   const int segs_n,
+                                   const int64_t silent_ms,
+                                   const int64_t voice_ms,
+                                   const float window_rms,
+                                   const size_t window_samples) {
+    if (!f) return;
+    std::fprintf(f,
+        "[VG] STATUS t=%lldms in_voice=%d voice_present=%d segs=%d silent=%lldms voice=%lldms win_rms=%.4f win_n=%zu\n",
+        (long long) t_ms,
+        in_voice ? 1 : 0,
+        voice_present ? 1 : 0,
+        segs_n,
+        (long long) silent_ms,
+        (long long) voice_ms,
+        window_rms,
+        window_samples);
+    std::fflush(f);
 }
 
 static int run_test_voice_gate_on_file(const app_params & params) {
@@ -529,6 +553,30 @@ static float audio_rms(const std::vector<float> & pcm) {
     return (float) std::sqrt(sumsq / (double) pcm.size());
 }
 
+static bool is_exact_you(const std::string & s) {
+    const auto w = split_words_lower_ascii(s);
+    return w.size() == 1 && w[0] == "you";
+}
+
+static bool is_short_garbage_like(const std::string & s) {
+    // Heuristic for weird junk output like "ΓÖ¬" that can appear on near-silence.
+    // Keep this intentionally conservative to avoid hiding legitimate non-English text.
+    if (s.size() > 8) return false;
+
+    const auto w = split_words_lower_ascii(s);
+    if (w.empty()) {
+        return true;
+    }
+
+    for (unsigned char ch : s) {
+        if (ch >= 0x80) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 static bool is_exact_thank_you(const std::string & s) {
     const auto w = split_words_lower_ascii(s);
     if (w.size() == 2 && w[0] == "thank" && w[1] == "you") return true;
@@ -578,6 +626,7 @@ static void print_usage(const char * exe) {
     std::fprintf(stderr, "Voice gate (speech vs noise):\n");
     std::fprintf(stderr, "  --no-voice-gate           Disable voice/noise gating and use the simple silence-tail VAD\n");
     std::fprintf(stderr, "  --trace-voice-gate        Print voice gate events (VOICE_START/VOICE_END/FLUSH)\n");
+    std::fprintf(stderr, "  --trace-voice-gate-status Print periodic voice gate status lines (very verbose)\n");
     std::fprintf(stderr, "  --vad-model <path>        Path to Silero VAD model (default: ./models/ggml-silero-v6.2.0.bin if present)\n");
     std::fprintf(stderr, "  --voice-stop-ms N         How long voice must be absent before flushing (default: 3000)\n");
     std::fprintf(stderr, "  --min-voice-ms N          Minimum voice duration required to send to Whisper (default: 600)\n");
@@ -744,6 +793,8 @@ static bool parse_args(int argc, char ** argv, app_params & p) {
             p.debug_voice_gate = true;
         } else if (arg == "--trace-voice-gate") {
             p.trace_voice_gate = true;
+        } else if (arg == "--trace-voice-gate-status") {
+            p.trace_voice_gate_status = true;
         } else if (arg == "--no-voice-gate") {
             p.voice_gate = false;
         } else if (arg == "--test-voice-gate") {
@@ -1167,6 +1218,7 @@ int main(int argc, char ** argv) {
     auto t_last_voice  = t_voice_start;
     bool trace_silence_started = false;
     const auto t_trace0 = std::chrono::high_resolution_clock::now();
+    auto t_last_vg_status = t_trace0;
 
     std::fprintf(stderr, "\nAi-Subtitler started.\n");
     std::fprintf(stderr, "- Capture device index: %d\n", params.device_index);
@@ -1221,9 +1273,29 @@ int main(int argc, char ** argv) {
         // Voice gate mode: only run Whisper when speech has ended for long enough.
         if (params.voice_gate && vctx) {
             bool voice_present = false;
+            int segs_n = 0;
             whisper_vad_segments * segs = whisper_vad_segments_from_samples(vctx, vadp, pcm_vad_window.data(), (int) pcm_vad_window.size());
-            voice_present = segs && whisper_vad_segments_n_segments(segs) > 0;
+            segs_n = segs ? whisper_vad_segments_n_segments(segs) : 0;
+            voice_present = segs_n > 0;
             if (segs) whisper_vad_free_segments(segs);
+
+            if (params.trace_voice_gate && params.trace_voice_gate_status) {
+                const auto status_diff_ms = (int64_t) std::chrono::duration_cast<std::chrono::milliseconds>(t_now - t_last_vg_status).count();
+                if (status_diff_ms >= 1000) {
+                    const int64_t silent_ms = in_voice ? (int64_t) std::chrono::duration_cast<std::chrono::milliseconds>(t_now - t_last_voice).count() : -1;
+                    const int64_t voice_ms  = in_voice ? (int64_t) std::chrono::duration_cast<std::chrono::milliseconds>(t_last_voice - t_voice_start).count() : -1;
+                    print_voice_gate_status(stderr,
+                        ms_since(t_trace0, t_now),
+                        in_voice,
+                        voice_present,
+                        segs_n,
+                        silent_ms,
+                        voice_ms,
+                        audio_rms(pcm_vad_window),
+                        pcm_vad_window.size());
+                    t_last_vg_status = t_now;
+                }
+            }
 
             if (voice_present) {
                 if (!in_voice) {
@@ -1257,10 +1329,42 @@ int main(int argc, char ** argv) {
                         }
 
                         audio.get(block_ms, pcm_block);
+
+                        // IMPORTANT: in voice-gate mode we intentionally wait for `voice_stop_ms` of silence.
+                        // The `block_ms` above includes that trailing silence, which can cause tiny models to hallucinate
+                        // short outputs like "Thank you" / "you" / junk glyphs on the silent tail.
+                        // We cannot fix this by shrinking block_ms (audio.get(ms) returns the most recent ms, which would
+                        // chop the *start* of speech). Instead, trim the silence from the end of the captured block.
+                        {
+                            constexpr int32_t k_keep_tail_ms = 200;
+                            const int64_t trim_ms = std::max<int64_t>(0, silent_ms - k_keep_tail_ms);
+                            const size_t trim_samples = (size_t) ((trim_ms * WHISPER_SAMPLE_RATE) / 1000);
+                            if (trim_samples > 0 && trim_samples < pcm_block.size()) {
+                                pcm_block.resize(pcm_block.size() - trim_samples);
+                            } else if (trim_samples >= pcm_block.size()) {
+                                pcm_block.clear();
+                            }
+                        }
+
+                        if (params.trace_voice_gate) {
+                            std::fprintf(stderr,
+                                "[VG] FLUSH_AUDIO silent=%lldms block_ms=%d pcm_n=%zu rms=%.4f\n",
+                                (long long) silent_ms,
+                                (int) block_ms,
+                                pcm_block.size(),
+                                audio_rms(pcm_block));
+                            std::fflush(stderr);
+                        }
                         if (pcm_block.size() >= (size_t) (WHISPER_SAMPLE_RATE * 0.5)) {
                             have_pcm_block = true;
                             gated_block = true;
                         } else {
+                            if (params.trace_voice_gate) {
+                                std::fprintf(stderr, "[VG] DROP_TOO_SHORT pcm_n=%zu (need >= %.0f)\n",
+                                    pcm_block.size(),
+                                    (double) (WHISPER_SAMPLE_RATE * 0.5));
+                                std::fflush(stderr);
+                            }
                             audio.clear();
                             in_voice = false;
                             t_last = t_now;
@@ -1270,6 +1374,10 @@ int main(int argc, char ** argv) {
                         // Too short: likely a click / noise burst.
                         if (params.trace_voice_gate) {
                             print_voice_gate_trace(stderr, "DROP_SHORT", ms_since(t_trace0, t_now), voice_ms, 0);
+                            std::fprintf(stderr, "[VG] DROP_SHORT_DETAIL silent=%lldms min_voice=%dms\n",
+                                (long long) silent_ms,
+                                params.min_voice_ms);
+                            std::fflush(stderr);
                         }
                         audio.clear();
                         in_voice = false;
@@ -1306,7 +1414,9 @@ int main(int argc, char ** argv) {
             }
         }
 
-        const float block_frac = (params.fast || params.debug_thankyou) ? audio_activity_fraction(pcm_block, /*abs_thold=*/0.01f) : 0.0f;
+        // Activity fraction is cheap and used for conservative near-silence suppression.
+        // Compute it consistently across modes so suppression decisions aren't based on a hardcoded 0.
+        const float block_frac = audio_activity_fraction(pcm_block, /*abs_thold=*/0.01f);
         const float block_rms  = params.debug_thankyou ? audio_rms(pcm_block) : 0.0f;
         const float vad_frac   = params.debug_thankyou ? audio_activity_fraction(pcm_vad_window, /*abs_thold=*/0.01f) : 0.0f;
         const float vad_rms    = params.debug_thankyou ? audio_rms(pcm_vad_window) : 0.0f;
@@ -1417,7 +1527,19 @@ int main(int argc, char ** argv) {
         }
 
         const bool is_thanks = is_exact_thank_you(text);
+        const bool is_you = is_exact_you(text);
+        const bool is_garbage = is_short_garbage_like(text);
         const bool suppress_thanks = params.fast && is_thanks && max_no_speech_prob >= 0.80f;
+
+        // Suppress common near-silence end-of-utterance garbage.
+        // Keep this conservative: only when Whisper itself says it's probably no-speech.
+        // If the confidence is extremely high, allow suppression even with some background noise.
+        const bool suppress_silence_garbage =
+            (is_you || is_garbage) &&
+            (
+                (max_no_speech_prob >= 0.95f) ||
+                (max_no_speech_prob >= 0.85f && block_frac < 0.02f)
+            );
 
         if (params.debug_thankyou && is_thanks) {
             std::fprintf(stderr,
@@ -1446,6 +1568,11 @@ int main(int argc, char ** argv) {
         // Tiny models can hallucinate short polite phrases after an utterance or during near-silence.
         // Only suppress this in fast mode AND only when whisper itself says it's likely no-speech.
         if (suppress_thanks) {
+            t_last = t_now;
+            continue;
+        }
+
+        if (suppress_silence_garbage) {
             t_last = t_now;
             continue;
         }

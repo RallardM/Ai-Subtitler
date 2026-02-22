@@ -1,14 +1,28 @@
 @echo off
 setlocal EnableExtensions
 
+REM Batch parsing can be fragile when inspecting cmd command lines.
+REM To guarantee the window doesn't "flash and disappear" when double-clicked,
+REM self-spawn into a persistent cmd.exe /k window.
+REM Opt-out (for terminal usage): set AI_SUBTITLER_NO_SPAWN=1
+if "%AI_SUBTITLER_NO_SPAWN%"=="1" goto after_spawn
+if "%AI_SUBTITLER_SPAWNED%"=="1" goto after_spawn
+set "AI_SUBTITLER_SPAWNED=1"
+start "Ai-Subtitler Debug Voice Gate" cmd.exe /k ""%~f0" %*"
+exit /b 0
+:after_spawn
+
 REM Debug-only voice detection (Silero VAD). Prints only:
 REM   DETECT VOICE
 REM   DOES NOT DETECT VOICE
 
-if exist "%~dp0build\Debug\ai-subtitler-streamerbot.exe" (
-  set "EXE=%~dp0build\Debug\ai-subtitler-streamerbot.exe"
-) else (
-  set "EXE=%~dp0build\Release\ai-subtitler-streamerbot.exe"
+set "EXE=%~dp0ai-subtitler-streamerbot.exe"
+if not exist "%EXE%" (
+  if exist "%~dp0build\Debug\ai-subtitler-streamerbot.exe" (
+    set "EXE=%~dp0build\Debug\ai-subtitler-streamerbot.exe"
+  ) else (
+    set "EXE=%~dp0build\Release\ai-subtitler-streamerbot.exe"
+  )
 )
 
 if not exist "%EXE%" (
@@ -47,4 +61,20 @@ shift
 goto collect
 
 :run
+set "STAMP=%~dp0launcher-stamp-debug-voice-gate.txt"
+>"%STAMP%" echo START %date% %time%
+>>"%STAMP%" echo CWD: %cd%
+>>"%STAMP%" echo EXE: %EXE%
+>>"%STAMP%" echo ARGS: %MIC% --debug-voice-gate %EXTRA_ARGS%
+
 "%EXE%" %MIC% --debug-voice-gate %EXTRA_ARGS%
+set "ERR=%errorlevel%"
+>>"%STAMP%" echo EXIT %ERR% %date% %time%
+
+if not "%ERR%"=="0" echo(
+if not "%ERR%"=="0" echo Failed. errorlevel=%ERR%
+
+echo(
+echo Press any key to close...
+pause >nul
+exit /b %ERR%

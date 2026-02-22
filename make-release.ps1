@@ -34,8 +34,8 @@ Copy-Item -Force (Join-Path $BuildRelease "*") $StageDir
 $ExtraFiles = @(
   "start-ai-subtitler.cmd",
   "debug-voice-gate.cmd",
-  "download-model.cmd",
-  "download-model.ps1",
+  "download-model-tiny-multilanguage.cmd",
+  "download-model-tiny-en.cmd",
   "download-vad.cmd",
   "download-vad.ps1",
   "run.cmd",
@@ -52,29 +52,117 @@ foreach ($f in $ExtraFiles) {
 New-Item -ItemType Directory -Force (Join-Path $StageDir "models") | Out-Null
 
 # Convenience launchers in the release folder.
-# Note: .lnk shortcuts can be sensitive to extraction/move location on some systems,
-# so we also generate a portable .cmd launcher that always works.
+# Note: Windows .lnk shortcuts are not reliably portable after ZIP extraction/move
+# because they tend to store/resolve absolute paths. We generate a portable .cmd
+# launcher instead (double-click it).
 $FastCmd = Join-Path $StageDir "Start (Fast, Mic 0).cmd"
 @(
   '@echo off',
   'setlocal EnableExtensions',
+  'title Ai-Subtitler Launcher (Fast, Mic 0)',
+  'REM Batch parsing can be fragile when inspecting cmd command lines.',
+  'REM To guarantee the window does not "flash and disappear" when double-clicked,',
+  'REM self-spawn into cmd.exe /k unconditionally.',
+  'REM Opt-out (for terminal usage): set AI_SUBTITLER_NO_SPAWN=1',
+  'if "%AI_SUBTITLER_NO_SPAWN%"=="1" goto after_spawn',
+  'if "%AI_SUBTITLER_SPAWNED%"=="1" goto after_spawn',
+  'set "AI_SUBTITLER_SPAWNED=1"',
+  'start "Ai-Subtitler (Fast, Mic 0)" cmd.exe /k ""%~f0" %*"',
+  'exit /b 0',
+  ':after_spawn',
+  'set "STAMP=%~dp0launcher-stamp-start-fast-mic0.txt"',
+  '>"%STAMP%" echo START %date% %time%',
+  '>>"%STAMP%" echo CWD: %cd%',
+  '>>"%STAMP%" echo ARGS: %*',
   'call "%~dp0start-ai-subtitler.cmd" 0 --fast %*',
   'set "ERR=%errorlevel%"',
-  'if not "%ERR%"=="0" echo(',
-  'if not "%ERR%"=="0" echo Failed. errorlevel=%ERR%',
-  'if not "%ERR%"=="0" pause >nul',
+  '>>"%STAMP%" echo EXIT %ERR% %date% %time%',
+  'if "%ERR%"=="0" exit /b 0',
+  'echo(',
+  'echo Failed. errorlevel=%ERR%',
+  'if "%AI_SUBTITLER_NO_PAUSE%"=="1" exit /b %ERR%',
+  'echo(',
+  'echo Press any key to close...',
+  'pause >nul',
   'exit /b %ERR%'
 ) | Set-Content -Path $FastCmd -Encoding ASCII
 
+$TraceCmd = Join-Path $StageDir "Start (Fast, Prompt Mic, Trace Voice Gate).cmd"
+@(
+  '@echo off',
+  'setlocal EnableExtensions',
+  'title Ai-Subtitler Launcher (Fast, Trace Voice Gate)',
+  'REM Batch parsing can be fragile when inspecting cmd command lines.',
+  'REM To guarantee the window does not "flash and disappear" when double-clicked,',
+  'REM self-spawn into cmd.exe /k unconditionally.',
+  'REM Opt-out (for terminal usage): set AI_SUBTITLER_NO_SPAWN=1',
+  'if "%AI_SUBTITLER_NO_SPAWN%"=="1" goto after_spawn',
+  'if "%AI_SUBTITLER_SPAWNED%"=="1" goto after_spawn',
+  'set "AI_SUBTITLER_SPAWNED=1"',
+  'start "Ai-Subtitler (Fast, Trace Voice Gate)" cmd.exe /k ""%~f0" %*"',
+  'exit /b 0',
+  ':after_spawn',
+  'set "STAMP=%~dp0launcher-stamp-start-fast-trace-voice-gate.txt"',
+  '>"%STAMP%" echo START %date% %time%',
+  '>>"%STAMP%" echo CWD: %cd%',
+  '>>"%STAMP%" echo ARGS: %*',
+  'call "%~dp0start-ai-subtitler.cmd" --fast --trace-voice-gate %*',
+  'set "ERR=%errorlevel%"',
+  '>>"%STAMP%" echo EXIT %ERR% %date% %time%',
+  'if "%ERR%"=="0" exit /b 0',
+  'echo(',
+  'echo Failed. errorlevel=%ERR%',
+  'if "%AI_SUBTITLER_NO_PAUSE%"=="1" exit /b %ERR%',
+  'echo(',
+  'echo Press any key to close...',
+  'pause >nul',
+  'exit /b %ERR%'
+) | Set-Content -Path $TraceCmd -Encoding ASCII
+
+$NoGateCmd = Join-Path $StageDir "Start (Fast, Prompt Mic, No Voice Gate).cmd"
+@(
+  '@echo off',
+  'setlocal EnableExtensions',
+  'title Ai-Subtitler Launcher (Fast, No Voice Gate)',
+  'REM Batch parsing can be fragile when inspecting cmd command lines.',
+  'REM To guarantee the window does not "flash and disappear" when double-clicked,',
+  'REM self-spawn into cmd.exe /k unconditionally.',
+  'REM Opt-out (for terminal usage): set AI_SUBTITLER_NO_SPAWN=1',
+  'if "%AI_SUBTITLER_NO_SPAWN%"=="1" goto after_spawn',
+  'if "%AI_SUBTITLER_SPAWNED%"=="1" goto after_spawn',
+  'set "AI_SUBTITLER_SPAWNED=1"',
+  'start "Ai-Subtitler (Fast, No Voice Gate)" cmd.exe /k ""%~f0" %*"',
+  'exit /b 0',
+  ':after_spawn',
+  'set "STAMP=%~dp0launcher-stamp-start-fast-no-voice-gate.txt"',
+  '>"%STAMP%" echo START %date% %time%',
+  '>>"%STAMP%" echo CWD: %cd%',
+  '>>"%STAMP%" echo ARGS: %*',
+  'call "%~dp0start-ai-subtitler.cmd" --no-voice-gate %*',
+  'set "ERR=%errorlevel%"',
+  '>>"%STAMP%" echo EXIT %ERR% %date% %time%',
+  'if "%ERR%"=="0" exit /b 0',
+  'echo(',
+  'echo Failed. errorlevel=%ERR%',
+  'if "%AI_SUBTITLER_NO_PAUSE%"=="1" exit /b %ERR%',
+  'echo(',
+  'echo Press any key to close...',
+  'pause >nul',
+  'exit /b %ERR%'
+) | Set-Content -Path $NoGateCmd -Encoding ASCII
+
+# Best-effort .lnk shortcuts (may not remain valid if the extracted folder is moved).
 try {
-  $lnkPath = Join-Path $StageDir "Start (Fast, Mic 0).lnk"
+  $lnkPath = Join-Path $StageDir "Start (Fast, Prompt Mic, Trace Voice Gate).lnk"
   $wsh = New-Object -ComObject WScript.Shell
   $s = $wsh.CreateShortcut($lnkPath)
-  # Use a relative target so the link has the best chance of working after extraction.
-  $s.TargetPath = "start-ai-subtitler.cmd"
-  $s.Arguments = "0 --fast"
-  $s.IconLocation = "ai-subtitler-streamerbot.exe,0"
-  $s.Description = "Ai-Subtitler (fast, mic 0)"
+
+  # Use cmd.exe (stable path) and run the portable launcher in the extracted folder.
+  $s.TargetPath = "$env:SystemRoot\System32\cmd.exe"
+  $s.Arguments = '/k "Start (Fast, Prompt Mic, Trace Voice Gate).cmd"'
+  $s.WorkingDirectory = $StageDir
+  $s.IconLocation = (Join-Path $StageDir 'ai-subtitler-streamerbot.exe') + ',0'
+  $s.Description = 'Ai-Subtitler (fast, trace voice gate; prompts for mic)'
   $s.Save()
 } catch {
   Write-Warning "Could not create .lnk shortcut: $($_.Exception.Message)"

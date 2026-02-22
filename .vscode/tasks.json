@@ -1,25 +1,42 @@
 {
-  "version": "2.0.0",
-  "tasks": [
-    {
-      "label": "Ai-Subtitler: List capture devices",
-      "type": "shell",
-      "command": "${workspaceFolder}\\list-devices.cmd",
-      "problemMatcher": []
-    },
-    {
-      "label": "Ai-Subtitler: Start (mic index 0)",
-      "type": "shell",
-      "command": "${workspaceFolder}\\start-ai-subtitler.cmd",
-      "args": ["0"],
-      "problemMatcher": []
-    },
-    {
-      "label": "Ai-Subtitler: Start (mic name contains Samson)",
-      "type": "shell",
-      "command": "${workspaceFolder}\\start-ai-subtitler.cmd",
-      "args": ["Samson"],
-      "problemMatcher": []
-    }
-  ]
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Ai-Subtitler: List capture devices",
+			"type": "shell",
+			"command": "${workspaceFolder}\\list-devices.cmd",
+			"problemMatcher": []
+		},
+		{
+			"label": "Ai-Subtitler: Start (mic index 0)",
+			"type": "shell",
+			"command": "${workspaceFolder}\\start-ai-subtitler.cmd",
+			"args": [
+				"0"
+			],
+			"problemMatcher": []
+		},
+		{
+			"label": "Ai-Subtitler: Start (mic name contains Samson)",
+			"type": "shell",
+			"command": "${workspaceFolder}\\start-ai-subtitler.cmd",
+			"args": [
+				"Samson"
+			],
+			"problemMatcher": []
+		},
+		{
+			"label": "Ai-Subtitler: Build Release (cmake)",
+			"type": "shell",
+			"command": "cmake",
+			"args": [
+				"--build",
+				"build",
+				"--config",
+				"Release"
+			],
+			"isBackground": false,
+			"problemMatcher": []
+		}
+	]
 }

@@ -66,10 +66,11 @@ New-Item -ItemType Directory -Force models | Out-Null
 submodules\whisper.cpp\models\download-ggml-model.cmd tiny .\models
 ```
 
-Release ZIP users (no git submodule): you can also run the bundled downloader:
+Release ZIP users (no git submodule): use the explicit download scripts (easier to tell apart):
 
 ```powershell
-.\download-model.cmd tiny
+.\download-model-tiny-multilanguage.cmd
+.\download-model-tiny-en.cmd
 ```
 
 This typically produces `models/ggml-tiny.bin` (exact name depends on the model).
@@ -88,7 +89,7 @@ Notes:
 
 This is preconfigured for:
 
-- Model: prefers `models\ggml-tiny.bin` (multilingual), then `models\ggml-tiny.en.bin`, then falls back to `models\ggml-medium.bin`
+- Model: uses a model picker. It lists Whisper models found under `models\` and asks you to pick one by number for the current run.
 - Streamer.bot WS: `ws://127.0.0.1:8080/`
 - Action name: `AI Subtitler` (arg key: `AiText`)
 
@@ -117,6 +118,26 @@ Tip: you can also pass extra flags after the mic selection, for example:
 
 ```powershell
 .\start-ai-subtitler.cmd 0 --debug-thankyou
+```
+
+In the Release ZIP, you can double-click `Start (Fast, Mic 0).cmd` (portable launcher). It already keeps the console open.
+
+If you launch via a Windows shortcut and the console closes too quickly, add `--keep-open` (launcher-only) to keep the window open after the app exits:
+
+```powershell
+.\start-ai-subtitler.cmd 0 --keep-open
+```
+
+If you want to skip the interactive model picker from a shortcut, pass either:
+
+- `--model <path>` (explicit file)
+- `--model-index N` (launcher-only; chooses the Nth model listed from `models\`)
+
+Examples:
+
+```powershell
+.\start-ai-subtitler.cmd 0 --model-index 0
+.\start-ai-subtitler.cmd 0 --model .\models\ggml-tiny.en.bin
 ```
 
 ### Voice gate (speech vs noise)
