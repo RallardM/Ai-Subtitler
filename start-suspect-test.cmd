@@ -51,9 +51,9 @@ set "STAMP=%ROOT%launcher-stamp-suspect-test.txt"
 >>"%STAMP%" echo NOTE: In voice-gate mode, you must pause ~3s after speaking to flush to Whisper.
 
 if "%HAS_MIC%"=="1" (
-  call "%ROOT%run.cmd" --mic "%MIC_ARG%" --model "%MODEL%" --fast --suppress-lone-you --suspect-log "%SUSPECT_LOG%" --suspect-dump-dir "%SUSPECT_DIR%" %*
+  call "%ROOT%run.cmd" --mic "%MIC_ARG%" --model "%MODEL%" --all --fast --suppress-lone-you --suspect-log "%SUSPECT_LOG%" --suspect-dump-dir "%SUSPECT_DIR%" %*
 ) else (
-  call "%ROOT%run.cmd" --model "%MODEL%" --fast --suppress-lone-you --suspect-log "%SUSPECT_LOG%" --suspect-dump-dir "%SUSPECT_DIR%" %*
+  call "%ROOT%run.cmd" --model "%MODEL%" --all --fast --suppress-lone-you --suspect-log "%SUSPECT_LOG%" --suspect-dump-dir "%SUSPECT_DIR%" %*
 )
 
 set "ERR=%errorlevel%"

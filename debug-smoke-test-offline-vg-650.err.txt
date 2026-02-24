@@ -1,0 +1,9 @@
+
+Voice gate OFFLINE test
+- audio: submodules\whisper.cpp\samples\jfk.wav
+- duration: 11000ms (samples=176000 @ 16000Hz)
+- vad_model: models/ggml-silero-v6.2.0.bin
+- stop=650ms min=600ms thold=0.72 check=50ms window=2000ms length=30000ms
+
+
+Voice gate OFFLINE test complete: flushes=1

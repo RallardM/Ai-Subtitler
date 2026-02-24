@@ -1,0 +1,3 @@
+[VG] VOICE_START t=600ms
+[VG] VOICE_END t=12250ms
+[VG] FLUSH t=13150ms voice=11600ms block=12550ms

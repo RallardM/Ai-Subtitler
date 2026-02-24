@@ -95,6 +95,14 @@ This is preconfigured for:
 
 The one-click launcher uses `--fast` by default to reduce latency (faster, less accurate).
 
+Note: the app now defaults to a **minimal** runtime mode for performance isolation.
+The launchers in this repo explicitly pass `--all` so their behavior stays the same.
+
+If you run the exe directly and want the previous behavior, add either:
+
+- `--all` (enable all production features), or
+- `--mode full`
+
 ```powershell
 .\start-ai-subtitler.cmd
 ```
@@ -113,6 +121,26 @@ Examples:
 # mic by name substring
 .\start-ai-subtitler.cmd "Samson"
 ```
+
+### Performance isolation (remove flags one-by-one)
+
+Run minimal (default) then selectively add feature flags:
+
+```powershell
+# minimal baseline (features OFF unless enabled)
+build\Release\ai-subtitler-streamerbot.exe --mic 0
+
+# add features one by one
+build\Release\ai-subtitler-streamerbot.exe --mic 0 --voice-gate
+build\Release\ai-subtitler-streamerbot.exe --mic 0 --streamerbot
+build\Release\ai-subtitler-streamerbot.exe --mic 0 --lang-fallback-fr
+build\Release\ai-subtitler-streamerbot.exe --mic 0 --dedup-similarity 0.90
+
+# previous behavior in one flag
+build\Release\ai-subtitler-streamerbot.exe --all --mic 0
+```
+
+Debug-only options like `--profile`, `--suspect-log`, `--suspect-dump-dir`, and `--trace-voice-gate*` are not implied by `--all`.
 
 Tip: you can also pass extra flags after the mic selection, for example:
 

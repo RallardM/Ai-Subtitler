@@ -33,7 +33,7 @@ echo   Glitch filter: --suppress-lone-you
 
 set "VAD_MODEL=%~dp0models\ggml-silero-v6.2.0.bin"
 if exist "%VAD_MODEL%" (
-  echo   Voice gate: REQUIRED (Silero model found)
+  echo   Voice gate: REQUIRED (Silero model found^)
 ) else (
   echo   Voice gate: REQUIRED but Silero model is MISSING
   echo     Expected: %VAD_MODEL%
@@ -43,7 +43,7 @@ if exist "%VAD_MODEL%" (
 )
 echo(
 
-call "%~dp0run.cmd" --model "%MODEL%" --fast --suppress-lone-you --ws-url ws://127.0.0.1:8080/ --action-name "AI Subtitler" --arg-key AiText --startup-text "[Ai-Subtitler connected]" %EXTRA_ARGS%
+call "%~dp0run.cmd" --model "%MODEL%" --all --fast --suppress-lone-you --ws-url ws://127.0.0.1:8080/ --action-name "AI Subtitler" --arg-key AiText --startup-text "[Ai-Subtitler connected]" %EXTRA_ARGS%
 goto after_run
 
 :pick_model

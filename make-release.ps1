@@ -33,6 +33,11 @@ Copy-Item -Force (Join-Path $BuildRelease "*") $StageDir
 
 $ExtraFiles = @(
   "start-ai-subtitler.cmd",
+  "debug-start-ai-subtitler.cmd",
+  "debug-smoke-test-offline-vg-930.cmd",
+  "debug-smoke-test-offline-vg-650.cmd",
+  "debug-smoke-test-latency-930.cmd",
+  "debug-smoke-test-latency-650.cmd",
   "start-suspect-test.cmd",
   "start-suspect-test.ps1",
   "debug-voice-gate.cmd",
@@ -66,9 +71,40 @@ if (Test-Path $ToolsDir) {
   if (Test-Path $Smoke) {
     Copy-Item -Force $Smoke $StageTools
   }
+
+  $ParseProf = Join-Path $ToolsDir "parse-profile.ps1"
+  if (Test-Path $ParseProf) {
+    Copy-Item -Force $ParseProf $StageTools
+  }
+
+  $VerifyZip = Join-Path $ToolsDir "verify-zip-contains.ps1"
+  if (Test-Path $VerifyZip) {
+    Copy-Item -Force $VerifyZip $StageTools
+  }
+
+  $SelfTest = Join-Path $ToolsDir "self-test-release.ps1"
+  if (Test-Path $SelfTest) {
+    Copy-Item -Force $SelfTest $StageTools
+  }
 }
 
 New-Item -ItemType Directory -Force (Join-Path $StageDir "models") | Out-Null
+
+# Bundle the required Silero VAD model in the release when available locally.
+# (Whisper models can be large; we only include tiny.en by default if present.)
+$RepoModelsDir = Join-Path $RepoRoot "models"
+$StageModelsDir = Join-Path $StageDir "models"
+
+$ModelsToBundle = @(
+  "ggml-silero-v6.2.0.bin",
+  "ggml-tiny.en.bin"
+)
+foreach ($m in $ModelsToBundle) {
+  $src = Join-Path $RepoModelsDir $m
+  if (Test-Path $src) {
+    Copy-Item -Force $src $StageModelsDir
+  }
+}
 
 # Convenience launcher in the release folder.
 # Note: Windows .lnk shortcuts are not reliably portable after ZIP extraction/move

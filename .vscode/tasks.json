@@ -21,6 +21,25 @@
 			"type": "shell",
 			"command": "${workspaceFolder}\\start-ai-subtitler.cmd",
 			"args": [
+				"--mic",
+				"Samson"
+			],
+			"problemMatcher": []
+		},
+		{
+			"label": "Ai-Subtitler: Debug Start (mic index 0)",
+			"type": "shell",
+			"command": "${workspaceFolder}\\debug-start-ai-subtitler.cmd",
+			"args": [
+				"0"
+			],
+			"problemMatcher": []
+		},
+		{
+			"label": "Ai-Subtitler: Debug Start (mic name contains Samson)",
+			"type": "shell",
+			"command": "${workspaceFolder}\\debug-start-ai-subtitler.cmd",
+			"args": [
 				"Samson"
 			],
 			"problemMatcher": []
@@ -36,7 +55,173 @@
 				"Release"
 			],
 			"isBackground": false,
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "Ai-Subtitler: Make Release Zip",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}\\make-release.ps1"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "Ai-Subtitler: Verify Zip Contains Debug Shortcut",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}\\tools\\verify-zip-contains.ps1",
+				"-ZipPath",
+				"${workspaceFolder}\\dist\\Ai-Subtitler-Release.zip",
+				"-Entry",
+				"debug-start-ai-subtitler.cmd"
+			],
+			"isBackground": false,
 			"problemMatcher": []
+		},
+		{
+			"label": "Ai-Subtitler: Verify CLI Flags",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}\\tools\\verify-cli-flags.ps1"
+			],
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Ai-Subtitler: Smoke Offline VG (stop=930)",
+			"type": "shell",
+			"command": "${workspaceFolder}\\debug-smoke-test-offline-vg-930.cmd",
+			"options": {
+				"env": {
+					"AI_SUBTITLER_NO_SPAWN": "1",
+					"AI_SUBTITLER_NO_PAUSE": "1"
+				}
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Ai-Subtitler: Smoke Offline VG (stop=650)",
+			"type": "shell",
+			"command": "${workspaceFolder}\\debug-smoke-test-offline-vg-650.cmd",
+			"options": {
+				"env": {
+					"AI_SUBTITLER_NO_SPAWN": "1",
+					"AI_SUBTITLER_NO_PAUSE": "1"
+				}
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Ai-Subtitler: Smoke Live Latency (stop=930, mic 0)",
+			"type": "shell",
+			"command": "${workspaceFolder}\\debug-smoke-test-latency-930.cmd",
+			"args": [
+				"0"
+			],
+			"options": {
+				"env": {
+					"AI_SUBTITLER_NO_SPAWN": "1",
+					"AI_SUBTITLER_NO_PAUSE": "1"
+				}
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Ai-Subtitler: Smoke Live Latency (stop=650, mic 0)",
+			"type": "shell",
+			"command": "${workspaceFolder}\\debug-smoke-test-latency-650.cmd",
+			"args": [
+				"0"
+			],
+			"options": {
+				"env": {
+					"AI_SUBTITLER_NO_SPAWN": "1",
+					"AI_SUBTITLER_NO_PAUSE": "1"
+				}
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Ai-Subtitler: Summarize Live A/B (930 vs 650)",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}\\tools\\parse-profile.ps1",
+				"${workspaceFolder}\\debug-smoke-test-latency-930.prof.txt",
+				"${workspaceFolder}\\debug-smoke-test-latency-650.prof.txt"
+			],
+			"problemMatcher": []
+		},
+		{
+			"label": "Ai-Subtitler: Live (explicit flags, no --all)",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}\\tools\\run-live-ab.ps1",
+				"-OmitFeature",
+				"none"
+			],
+			"problemMatcher": []
+		},
+		{
+			"label": "Ai-Subtitler: Live (explicit flags, omit 1 feature)",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}\\tools\\run-live-ab.ps1",
+				"-OmitFeature",
+				"${input:AiSubtitlerOmitFeature}"
+			],
+			"problemMatcher": []
+		}
+	],
+	"inputs": [
+		{
+			"id": "AiSubtitlerOmitFeature",
+			"type": "pickString",
+			"description": "Which feature flag should be omitted for this run?",
+			"options": [
+				"streamerbot",
+				"voice-gate",
+				"lang-fallback-fr",
+				"pre-whisper-guards",
+				"post-suppressions",
+				"dedup-suffix",
+				"dedup-similarity",
+				"wrap-output",
+				"block-stats"
+			],
+			"default": "lang-fallback-fr"
 		}
 	]
 }
