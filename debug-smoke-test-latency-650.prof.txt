@@ -1,0 +1,5 @@
+[Ai-Subtitler] OmitFeatures: streamerbot, lang-fallback-fr
+[Ai-Subtitler] Mic: 0
+[Ai-Subtitler] Args: --mic 0 --model B:\repos\MyProjects\Ai-Subtitler\models\ggml-tiny.en.bin --fast --suppress-lone-you --ws-url ws://127.0.0.1:8080/ --action-name AI Subtitler --arg-key AiText --startup-text [Ai-Subtitler connected] --vad-model B:\repos\MyProjects\Ai-Subtitler\models\ggml-silero-v6.2.0.bin --voice-gate --pre-whisper-guards --post-suppressions --dedup-suffix --wrap-output --block-stats --dedup-similarity 0.90 --voice-stop-ms 650 --profile
+[Start speaking]
+^C

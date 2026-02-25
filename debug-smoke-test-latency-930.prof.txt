@@ -1,0 +1,81 @@
+[Ai-Subtitler] OmitFeatures: streamerbot, lang-fallback-fr
+[Ai-Subtitler] Mic: Samson
+[Ai-Subtitler] Args: --mic Samson --model B:\repos\MyProjects\Ai-Subtitler\models\ggml-tiny.en.bin --fast --suppress-lone-you --ws-url ws://127.0.0.1:8080/ --action-name AI Subtitler --arg-key AiText --startup-text [Ai-Subtitler connected] --vad-model B:\repos\MyProjects\Ai-Subtitler\models\ggml-silero-v6.2.0.bin --voice-gate --pre-whisper-guards --post-suppressions --dedup-suffix --wrap-output --block-stats --dedup-similarity 0.90 --voice-stop-ms 930 --profile
+Using capture device index 1 (matched by name substring)
+whisper_backend_init_gpu: no GPU found
+init: found 2 capture devices:
+init:    - Capture device #0: 'Headset (ZS-BT1)'
+init:    - Capture device #1: 'Microphone (Samson Q1U               )'
+init: attempt to open capture device 1 : 'Microphone (Samson Q1U               )' ...
+init: obtained spec for input device (SDL Id = 2):
+init:     - sample rate:       16000
+init:     - format:            33056 (required: 33056)
+init:     - channels:          1 (required: 1)
+init:     - samples per frame: 1024
+Voice gate: ON (Silero, filter) stop=930ms min=600ms thold=0.72 max_voice=0ms check=500ms window=400ms pre_roll=250ms model=B:\repos\MyProjects\Ai-Subtitler\models\ggml-silero-v6.2.0.bin
+whisper_init_from_file_with_params_no_state: loading model from 'B:\repos\MyProjects\Ai-Subtitler\models\ggml-tiny.en.bin'
+whisper_init_with_params_no_state: use gpu    = 1
+whisper_init_with_params_no_state: flash attn = 1
+whisper_init_with_params_no_state: gpu_device = 0
+whisper_init_with_params_no_state: dtw        = 0
+whisper_init_with_params_no_state: devices    = 1
+whisper_init_with_params_no_state: backends   = 1
+whisper_model_load: loading model
+whisper_model_load: n_vocab       = 51864
+whisper_model_load: n_audio_ctx   = 1500
+whisper_model_load: n_audio_state = 384
+whisper_model_load: n_audio_head  = 6
+whisper_model_load: n_audio_layer = 4
+whisper_model_load: n_text_ctx    = 448
+whisper_model_load: n_text_state  = 384
+whisper_model_load: n_text_head   = 6
+whisper_model_load: n_text_layer  = 4
+whisper_model_load: n_mels        = 80
+whisper_model_load: ftype         = 1
+whisper_model_load: qntvr         = 0
+whisper_model_load: type          = 1 (tiny)
+whisper_model_load: adding 1607 extra tokens
+whisper_model_load: n_langs       = 99
+whisper_model_load:          CPU total size =    77.11 MB
+whisper_model_load: model size    =   77.11 MB
+whisper_backend_init_gpu: device 0: CPU (type: 0)
+whisper_backend_init_gpu: no GPU found
+whisper_init_state: kv self size  =    3.15 MB
+whisper_init_state: kv cross size =    9.44 MB
+whisper_init_state: kv pad  size  =    2.36 MB
+whisper_init_state: compute buffer (conv)   =   13.21 MB
+whisper_init_state: compute buffer (encode) =   17.72 MB
+whisper_init_state: compute buffer (cross)  =    3.89 MB
+whisper_init_state: compute buffer (decode) =   95.91 MB
+
+Ai-Subtitler started.
+- Capture device index: 1
+- VAD: length_ms=8000 check_ms=150 vad_window_ms=1500 vad_last_ms=650 vad_thold=0.60 freq_thold=100.0
+- Streamer.bot: OFF (feature disabled)
+Speak normally, then pause briefly to send a block.
+
+[Start speaking]
+Note: --startup-text ignored because Streamer.bot feature is disabled.
+[PROF] i=1 outcome=sent gated=1 block_ms=1989 gate_total=1989 voice=1059 silent=930 frac=0.287 rms=0.067200 get_vad=0 vad=1 cap=0 trim=-1 lang=-1 whisper=240 post=0 out=0 total=241 text_len=6
+[0] Hello.
+[PROF] i=2 outcome=sent gated=1 block_ms=1989 gate_total=1989 voice=1059 silent=930 frac=0.347 rms=0.036502 get_vad=0 vad=4 cap=0 trim=-1 lang=-1 whisper=238 post=0 out=0 total=243 text_len=11
+[1] to want to.
+[2] Hello, 1, 2, 1, 2.
+[PROF] i=3 outcome=sent gated=1 block_ms=3197 gate_total=3197 voice=2267 silent=930 frac=0.294 rms=0.034028 get_vad=0 vad=2 cap=0 trim=-1 lang=-1 whisper=250 post=0 out=0 total=254 text_len=18
+[3] Arro
+[PROF] i=4 outcome=sent gated=1 block_ms=2287 gate_total=2287 voice=1357 silent=930 frac=0.485 rms=0.061782 get_vad=0 vad=3 cap=0 trim=-1 lang=-1 whisper=233 post=0 out=0 total=237 text_len=4
+[4] I speak a few sentences to the
+microphone one-pronged tab.
+[PROF] i=5 outcome=sent gated=1 block_ms=5162 gate_total=5162 voice=4232 silent=930 frac=0.422 rms=0.041251 get_vad=0 vad=2 cap=0 trim=-1 lang=-1 whisper=253 post=0 out=0 total=255 text_len=58
+[5] I see nothing.
+[PROF] i=6 outcome=sent gated=1 block_ms=4106 gate_total=4106 voice=3176 silent=930 frac=0.285 rms=0.029242 get_vad=0 vad=2 cap=0 trim=-1 lang=-1 whisper=237 post=0 out=0 total=240 text_len=14
+[6] to link me.
+[PROF] i=7 outcome=sent gated=1 block_ms=2440 gate_total=2440 voice=1510 silent=930 frac=0.658 rms=0.057396 get_vad=0 vad=2 cap=0 trim=-1 lang=-1 whisper=235 post=0 out=0 total=239 text_len=11
+[7] to speak.
+[PROF] i=8 outcome=sent gated=1 block_ms=2593 gate_total=2593 voice=1663 silent=930 frac=0.210 rms=0.022398 get_vad=0 vad=3 cap=0 trim=-1 lang=-1 whisper=229 post=0 out=0 total=233 text_len=9
+[8] Bye.
+[PROF] i=9 outcome=sent gated=1 block_ms=3199 gate_total=3199 voice=2269 silent=930 frac=0.309 rms=0.034857 get_vad=0 vad=6 cap=0 trim=-1 lang=-1 whisper=232 post=0 out=0 total=239 text_len=4
+[9] see stuff.
+[PROF] i=10 outcome=sent gated=1 block_ms=3195 gate_total=3195 voice=2265 silent=930 frac=0.321 rms=0.033721 get_vad=0 vad=2 cap=0 trim=-1 lang=-1 whisper=242 post=0 out=0 total=245 text_len=10
+[10] Nothing.
+[PROF] i=11 outcome=sent gated=1 block_ms=3500 gate_total=3500 voice=2570 silent=930 frac=0.327 rms=0.025906 get_vad=0 vad=3 cap=0 trim=-1 lang=-1 whisper=237 post=0 out=0 total=241 text_len=8

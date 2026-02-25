@@ -111,6 +111,8 @@ if (-not $SkipOffline) {
     if (Test-Path $VadModel) {
       $results += Invoke-Check -Label "offline test-voice-gate" -Args @("--vad-model", $VadModel, "--test-voice-gate", $WavPath)
       $results += Invoke-Check -Label "offline test-voice-gate + voice-gate flag" -Args @("--voice-gate", "--vad-model", $VadModel, "--test-voice-gate", $WavPath)
+      $results += Invoke-Check -Label "offline test-voice-gate-filter" -Args @("--vad-model", $VadModel, "--test-voice-gate-filter", $WavPath)
+      $results += Invoke-Check -Label "offline test-voice-gate-filter + voice-gate flag" -Args @("--voice-gate", "--vad-model", $VadModel, "--test-voice-gate-filter", $WavPath)
     } else {
       Write-Warning "Skipping offline checks; VAD model not found: $VadModel"
     }

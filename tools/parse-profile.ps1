@@ -11,7 +11,11 @@ $ErrorActionPreference = 'Stop'
 function Parse-ProfLine {
 	param([string]$Line)
 
-	if (-not $Line.StartsWith('[PROF] ')) { return $null }
+	$idx = $Line.IndexOf('[PROF] ')
+	if ($idx -lt 0) { return $null }
+	if ($idx -gt 0) {
+		$Line = $Line.Substring($idx)
+	}
 
 	$obj = [ordered]@{}
 	foreach ($token in ($Line.Substring(7) -split ' ')) {
@@ -38,6 +42,9 @@ function Parse-ProfLine {
 		gate_total = & $asInt64 $obj['gate_total']
 		voice      = & $asInt64 $obj['voice']
 		silent     = & $asInt64 $obj['silent']
+		get_vad    = & $asInt64 $obj['get_vad']
+		vad        = & $asInt64 $obj['vad']
+		cap        = & $asInt64 $obj['cap']
 		whisper    = & $asInt64 $obj['whisper']
 		total      = & $asInt64 $obj['total']
 		text_len   = & $asInt64 $obj['text_len']
@@ -103,6 +110,9 @@ foreach ($p in $Path) {
 	}
 
 	$silent = @($rows | ForEach-Object { $_.silent })
+	$get_vad = @($rows | ForEach-Object { $_.get_vad })
+	$vad = @($rows | ForEach-Object { $_.vad })
+	$cap = @($rows | ForEach-Object { $_.cap })
 	$whisper = @($rows | ForEach-Object { $_.whisper })
 	$total = @($rows | ForEach-Object { $_.total })
 
@@ -116,6 +126,9 @@ foreach ($p in $Path) {
 
 	Print-StatsBlock -Title 'Key timings' -Stats @(
 		(Summary-Stats -Label 'silent' -Values $silent),
+		(Summary-Stats -Label 'get_vad' -Values $get_vad),
+		(Summary-Stats -Label 'vad' -Values $vad),
+		(Summary-Stats -Label 'cap' -Values $cap),
 		(Summary-Stats -Label 'whisper' -Values $whisper),
 		(Summary-Stats -Label 'silent+whisper' -Values $perceived),
 		(Summary-Stats -Label 'total' -Values $total)

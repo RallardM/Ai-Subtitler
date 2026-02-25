@@ -145,9 +145,69 @@
 			"problemMatcher": []
 		},
 		{
+			"label": "Ai-Subtitler: Smoke Live Latency (stop=930, mic name contains Samson)",
+			"type": "shell",
+			"command": "${workspaceFolder}\\debug-smoke-test-latency-930.cmd",
+			"args": [
+				"Samson"
+			],
+			"options": {
+				"env": {
+					"AI_SUBTITLER_NO_SPAWN": "1",
+					"AI_SUBTITLER_NO_PAUSE": "1"
+				}
+			},
+			"problemMatcher": []
+		},
+		{
 			"label": "Ai-Subtitler: Smoke Live Latency (stop=650, mic 0)",
 			"type": "shell",
 			"command": "${workspaceFolder}\\debug-smoke-test-latency-650.cmd",
+			"args": [
+				"0"
+			],
+			"options": {
+				"env": {
+					"AI_SUBTITLER_NO_SPAWN": "1",
+					"AI_SUBTITLER_NO_PAUSE": "1"
+				}
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Ai-Subtitler: Smoke Live Latency (stop=650, mic name contains Samson)",
+			"type": "shell",
+			"command": "${workspaceFolder}\\debug-smoke-test-latency-650.cmd",
+			"args": [
+				"Samson"
+			],
+			"options": {
+				"env": {
+					"AI_SUBTITLER_NO_SPAWN": "1",
+					"AI_SUBTITLER_NO_PAUSE": "1"
+				}
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Ai-Subtitler: Live Latency A/B (930 vs 650, mic name contains Samson)",
+			"type": "shell",
+			"command": "${workspaceFolder}\\debug-live-latency-ab.cmd",
+			"args": [
+				"Samson"
+			],
+			"options": {
+				"env": {
+					"AI_SUBTITLER_NO_SPAWN": "1",
+					"AI_SUBTITLER_NO_PAUSE": "1"
+				}
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Ai-Subtitler: Live Latency A/B (930 vs 650, mic 0)",
+			"type": "shell",
+			"command": "${workspaceFolder}\\debug-live-latency-ab.cmd",
 			"args": [
 				"0"
 			],

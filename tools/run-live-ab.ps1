@@ -311,8 +311,36 @@ try {
 	Set-Location -LiteralPath $repoRoot
 
 	# Merge stderr into stdout so startup status / warnings are visible.
-	& $exePath @args 2>&1
-	$code = $LASTEXITCODE
+	# IMPORTANT: this script uses $ErrorActionPreference = 'Stop' for script errors,
+	# but we must NOT treat native stderr output as a terminating PowerShell error,
+	# otherwise normal whisper.cpp messages (and our [PROF] lines) abort the run.
+	$oldEap = $ErrorActionPreference
+	$hadNativePref = Test-Path -LiteralPath variable:PSNativeCommandUseErrorActionPreference
+	$oldNativePref = $null
+	try {
+		$ErrorActionPreference = 'Continue'
+		if ($hadNativePref) {
+			$oldNativePref = $PSNativeCommandUseErrorActionPreference
+			$PSNativeCommandUseErrorActionPreference = $false
+		}
+
+		& $exePath @args 2>&1 | ForEach-Object {
+			if ($_ -is [System.Management.Automation.ErrorRecord]) {
+				$_.Exception.Message
+			} elseif ($_ -is [System.Exception]) {
+				$_.Message
+			} else {
+				$_.ToString()
+			}
+		}
+		$code = $LASTEXITCODE
+	} finally {
+		$ErrorActionPreference = $oldEap
+		if ($hadNativePref) {
+			$PSNativeCommandUseErrorActionPreference = $oldNativePref
+		}
+	}
+
 	Write-Output ("[Ai-Subtitler] Exited with code: {0}" -f $code)
 	exit $code
 } finally {
