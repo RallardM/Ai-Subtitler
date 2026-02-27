@@ -918,6 +918,7 @@ public:
     streamerbot_sender(const streamerbot_sender &) = delete;
     streamerbot_sender & operator=(const streamerbot_sender &) = delete;
 
+
     void enqueue(streamerbot_send_item item) {
         {
             std::lock_guard<std::mutex> lock(m_mu);
@@ -925,6 +926,8 @@ public:
                 return;
             }
             m_q.push_back(std::move(item));
+            m_last_enqueue = std::chrono::steady_clock::now();
+            m_sent_empty_since_last = false;
         }
         m_cv.notify_one();
     }
@@ -952,6 +955,10 @@ public:
     }
 
 private:
+    // For idle timeout
+    std::chrono::steady_clock::time_point m_last_enqueue = std::chrono::steady_clock::now();
+    bool m_sent_empty_since_last = false;
+
     static std::chrono::milliseconds compute_delay_ms(const size_t raw_len, const size_t backlog_remaining) {
         // Length-based reading delay, clamped to [2s, 4s].
         // When the queue is backing up, speed up slightly (but never below 2s).
@@ -973,31 +980,33 @@ private:
         return std::chrono::milliseconds(std::max(0, ms));
     }
 
+
     void run() {
         streamerbot_ws_client bot;
+        const auto idle_timeout = std::chrono::seconds(6);
 
         while (true) {
             streamerbot_send_item item;
             size_t backlog_remaining = 0;
+            bool has_item = false;
 
             {
                 std::unique_lock<std::mutex> lock(m_mu);
-                m_cv.wait(lock, [&]() { return m_stop || !m_q.empty(); });
-
-                if (m_q.empty()) {
-                    if (m_stop) {
-                        break;
-                    }
-                    continue;
+                // Wait for new item or stop, or timeout for idle
+                if (m_q.empty() && !m_stop) {
+                    m_cv.wait_for(lock, idle_timeout, [&]() { return m_stop || !m_q.empty(); });
                 }
 
-                item = std::move(m_q.front());
-                m_q.pop_front();
-                backlog_remaining = m_q.size();
+                if (!m_q.empty()) {
+                    item = std::move(m_q.front());
+                    m_q.pop_front();
+                    backlog_remaining = m_q.size();
+                    has_item = true;
+                }
             }
 
-            // Best-effort send (same behavior as the main loop used to have).
-            {
+            if (has_item) {
+                // Best-effort send
                 std::string err;
                 if (!bot.connect_and_handshake(m_cfg, err)) {
                     std::fprintf(stderr, "Streamer.bot connect failed (%s).\n", err.c_str());
@@ -1007,10 +1016,8 @@ private:
                     }
                 }
                 bot.close();
-            }
 
-            // If stopping, drain quickly (no additional delay).
-            {
+                // If stopping, drain quickly (no additional delay).
                 std::lock_guard<std::mutex> lock(m_mu);
                 if (m_stop) {
                     if (m_q.empty()) {
@@ -1018,9 +1025,27 @@ private:
                     }
                     continue;
                 }
-            }
 
-            std::this_thread::sleep_for(compute_delay_ms(item.raw_len, backlog_remaining));
+                std::this_thread::sleep_for(compute_delay_ms(item.raw_len, backlog_remaining));
+            } else {
+                // Idle timeout hit, send empty string if not already sent since last real sentence
+                std::lock_guard<std::mutex> lock(m_mu);
+                if (!m_stop && !m_sent_empty_since_last) {
+                    std::string err;
+                    if (!bot.connect_and_handshake(m_cfg, err)) {
+                        std::fprintf(stderr, "Streamer.bot connect failed (idle empty) (%s).\n", err.c_str());
+                    } else {
+                        if (!bot.do_action_text(m_cfg, "", err)) {
+                            std::fprintf(stderr, "DoAction failed (idle empty) (%s).\n", err.c_str());
+                        }
+                    }
+                    bot.close();
+                    m_sent_empty_since_last = true;
+                }
+                if (m_stop) {
+                    break;
+                }
+            }
         }
     }
 

@@ -263,6 +263,54 @@
 				"${input:AiSubtitlerOmitFeature}"
 			],
 			"problemMatcher": []
+		},
+		{
+			"label": "Build Ai-Subtitler after idle logic change",
+			"type": "shell",
+			"command": "cmake",
+			"args": [
+				"--build",
+				"build",
+				"--config",
+				"Release"
+			]
+		},
+		{
+			"label": "Smoke test idle logic",
+			"type": "shell",
+			"command": "debug-smoke-test-latency-930.cmd"
+		},
+		{
+			"label": "Build Release (cmake)",
+			"type": "shell",
+			"command": "cmake",
+			"args": [
+				"--build",
+				"build",
+				"--config",
+				"Release"
+			]
+		},
+		{
+			"label": "Make Release Zip",
+			"type": "shell",
+			"command": "make-release.cmd"
+		},
+		{
+			"label": "Verify Zip Contains Debug Shortcut",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}\\tools\\verify-zip-contains.ps1",
+				"-ZipPath",
+				"${workspaceFolder}\\dist\\Ai-Subtitler-Release.zip",
+				"-Entry",
+				"debug-start-ai-subtitler.cmd"
+			]
 		}
 	],
 	"inputs": [
